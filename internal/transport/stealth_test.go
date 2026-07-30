@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"testing"
+	"time"
 )
 
 // tcpPair returns the two ends of a real loopback TCP connection.
@@ -38,8 +39,39 @@ func tcpPair(t *testing.T) (net.Conn, net.Conn) {
 	if r.err != nil {
 		t.Fatalf("accept: %v", r.err)
 	}
+
 	t.Cleanup(func() { client.Close(); r.c.Close() })
 	return client, r.c
+}
+
+// testDeadline bounds every read and write on a test connection.
+//
+// It must be applied *after* the record-layer handshake, not before:
+// newStealthConn sets its own handshake deadline and clears it on the way out
+// with SetDeadline(time.Time{}), which would wipe anything set earlier. Without
+// a deadline, a test whose paired write failed would block in ReadFull until the
+// whole suite's timeout — turning a one-line failure into a multi-minute hang
+// that says nothing about which assertion broke.
+func testDeadline(t *testing.T, conns ...net.Conn) {
+	t.Helper()
+	// Generous for loopback, where these operations take microseconds, but short
+	// enough that a broken test reports in seconds rather than minutes.
+	d := time.Now().Add(5 * time.Second)
+	for _, c := range conns {
+		_ = c.SetDeadline(d)
+	}
+}
+
+// writeAsync writes on a connection from a goroutine, reporting any failure
+// rather than dropping it. Without this a failed write would show up only as
+// the paired read timing out, with no hint as to why.
+func writeAsync(t *testing.T, c net.Conn, p []byte) {
+	t.Helper()
+	go func() {
+		if _, err := c.Write(p); err != nil {
+			t.Errorf("write: %v", err) // Errorf is goroutine-safe; Fatalf is not
+		}
+	}()
 }
 
 // stealthPair wires two stealthConns over a real TCP pair. The salt exchange has
@@ -67,6 +99,8 @@ func stealthPairTokens(t *testing.T, tokenA, tokenB string) (*stealthConn, *stea
 	if r1.err != nil || r2.err != nil {
 		t.Fatalf("salt exchange failed: %v / %v", r1.err, r2.err)
 	}
+	// Only now, once the handshake has finished clearing its own deadline.
+	testDeadline(t, r1.c, r2.c)
 	return r1.c, r2.c
 }
 
@@ -74,7 +108,7 @@ func TestStealthRoundTrip(t *testing.T) {
 	c1, c2 := stealthPair(t, "a-shared-token")
 
 	msg := []byte("the quick brown fox jumps over the lazy dog")
-	go func() { c1.Write(msg) }()
+	writeAsync(t, c1, msg)
 
 	got := make([]byte, len(msg))
 	if _, err := io.ReadFull(c2, got); err != nil {
@@ -94,7 +128,7 @@ func TestStealthLargePayload(t *testing.T) {
 	if _, err := rand.Read(msg); err != nil {
 		t.Fatal(err)
 	}
-	go func() { c1.Write(msg) }()
+	writeAsync(t, c1, msg)
 
 	got := make([]byte, len(msg))
 	if _, err := io.ReadFull(c2, got); err != nil {
@@ -108,7 +142,7 @@ func TestStealthLargePayload(t *testing.T) {
 func TestStealthBidirectional(t *testing.T) {
 	c1, c2 := stealthPair(t, "token")
 
-	go func() { c1.Write([]byte("ping")) }()
+	writeAsync(t, c1, []byte("ping"))
 	buf := make([]byte, 4)
 	if _, err := io.ReadFull(c2, buf); err != nil {
 		t.Fatalf("c2 read: %v", err)
@@ -117,7 +151,7 @@ func TestStealthBidirectional(t *testing.T) {
 		t.Fatalf("c2 got %q", buf)
 	}
 
-	go func() { c2.Write([]byte("pong")) }()
+	writeAsync(t, c2, []byte("pong"))
 	if _, err := io.ReadFull(c1, buf); err != nil {
 		t.Fatalf("c1 read: %v", err)
 	}
@@ -134,7 +168,7 @@ func TestStealthWrongTokenFailsAuth(t *testing.T) {
 	// The mismatch only surfaces when a record fails to decrypt.
 	c1, c2 := stealthPairTokens(t, "right-token", "WRONG-token")
 
-	go func() { c1.Write([]byte("secret")) }()
+	writeAsync(t, c1, []byte("secret"))
 	buf := make([]byte, 6)
 	if _, err := io.ReadFull(c2, buf); err == nil {
 		t.Fatal("a mismatched token must not yield readable plaintext")
