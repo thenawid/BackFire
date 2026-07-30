@@ -44,19 +44,39 @@ func proof(token string, challenge []byte) []byte {
 	return mac.Sum(nil)
 }
 
+// The exchange is deliberately client-first:
+//
+//	client → server   magic
+//	server → client   challenge (32 random bytes)
+//	client → server   proof = HMAC-SHA256(token, magic||challenge)
+//	server → client   status
+//
+// Two reasons it must be this way round. Practically, a datagram transport's
+// listener cannot even observe a peer until that peer sends something, so a
+// server-first greeting would deadlock on udp/kcp. And defensively, the server
+// emits nothing at all to something that has not already produced the right
+// magic, so a port scanner learns only that a socket accepted — never that a
+// tunnel lives here.
+//
 // ServerHandshake runs the exposed side of the exchange over an accepted
-// connection: it sends the magic and a fresh random challenge, reads the
-// client's proof and verifies it in constant time.
+// connection: it checks the magic, issues a fresh random challenge, then reads
+// and verifies the client's proof in constant time.
 func ServerHandshake(conn net.Conn, token string) error {
 	_ = conn.SetDeadline(time.Now().Add(handshakeTimeout))
 	defer conn.SetDeadline(time.Time{})
 
+	var gotMagic [4]byte
+	if _, err := io.ReadFull(conn, gotMagic[:]); err != nil {
+		return fmt.Errorf("read magic: %w", err)
+	}
+	if gotMagic != magic {
+		// Say nothing back — an unrecognised peer gets no signal at all.
+		return fmt.Errorf("bad magic %q — not a backfire client", gotMagic)
+	}
+
 	challenge := make([]byte, challengeLen)
 	if _, err := rand.Read(challenge); err != nil {
 		return fmt.Errorf("generate challenge: %w", err)
-	}
-	if _, err := conn.Write(magic[:]); err != nil {
-		return fmt.Errorf("write magic: %w", err)
 	}
 	if _, err := conn.Write(challenge); err != nil {
 		return fmt.Errorf("write challenge: %w", err)
@@ -66,8 +86,7 @@ func ServerHandshake(conn net.Conn, token string) error {
 	if _, err := io.ReadFull(conn, got); err != nil {
 		return fmt.Errorf("read proof: %w", err)
 	}
-	want := proof(token, challenge)
-	if subtle.ConstantTimeCompare(got, want) != 1 {
+	if subtle.ConstantTimeCompare(got, proof(token, challenge)) != 1 {
 		_, _ = conn.Write([]byte{statusFail})
 		return fmt.Errorf("client failed token authentication")
 	}
@@ -78,17 +97,13 @@ func ServerHandshake(conn net.Conn, token string) error {
 }
 
 // ClientHandshake runs the origin side over a freshly dialed connection: it
-// checks the magic, answers the challenge with its proof and reads the result.
+// announces the magic, answers the challenge with its proof and reads the result.
 func ClientHandshake(conn net.Conn, token string) error {
 	_ = conn.SetDeadline(time.Now().Add(handshakeTimeout))
 	defer conn.SetDeadline(time.Time{})
 
-	var gotMagic [4]byte
-	if _, err := io.ReadFull(conn, gotMagic[:]); err != nil {
-		return fmt.Errorf("read magic: %w", err)
-	}
-	if gotMagic != magic {
-		return fmt.Errorf("bad magic %q — not a backfire server", gotMagic)
+	if _, err := conn.Write(magic[:]); err != nil {
+		return fmt.Errorf("write magic: %w", err)
 	}
 	challenge := make([]byte, challengeLen)
 	if _, err := io.ReadFull(conn, challenge); err != nil {

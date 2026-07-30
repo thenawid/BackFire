@@ -25,24 +25,141 @@ const (
 	RoleClient Role = "client"
 )
 
-// Transport is the wire protocol carrying the multiplexed tunnel between the
-// two peers. The set is deliberately small but each entry is a full net.Conn
-// provider, so new transports slot in without touching the mux or protocol
-// layers above them.
+// Transport names the wire protocol carrying a tunnel between two peers.
+//
+// Every transport decomposes into two independent choices, which is what keeps
+// nine names from turning into nine implementations:
+//
+//   - a Base — how a single raw byte stream is obtained (tcp, udp, kcp, ws, wss)
+//   - a Mode — how many end-user connections share one such stream:
+//     ModeMux multiplexes them all onto one link, while ModePool keeps a warm
+//     pool of links and hands each connection its own.
+//
+// The auth handshake and the forwarding logic sit above both and are identical
+// for all nine.
 type Transport string
 
 const (
-	// TCP is a raw TCP stream — lowest overhead, most conspicuous to DPI.
+	// TCP is a raw TCP stream, one pooled link per forwarded connection —
+	// lowest possible overhead, most conspicuous to DPI.
 	TCP Transport = "tcp"
-	// WS is a WebSocket stream over plain HTTP — survives CDNs and L7 proxies.
+	// TCPMUX multiplexes every forwarded connection onto one TCP link. Fewer
+	// sockets and no per-connection setup cost, at the price of head-of-line
+	// coupling on a lossy path.
+	TCPMUX Transport = "tcpmux"
+	// STEALTH is a TCP link wrapped in an encrypted record layer keyed by the
+	// tunnel token. It has no TLS fingerprint and no recognisable handshake —
+	// on the wire it is indistinguishable from random bytes, so DPI has no
+	// pattern to match. Multiplexed.
+	STEALTH Transport = "stealth"
+	// UDP carries the tunnel inside UDP datagrams with a minimal reliable,
+	// ordered stream layer on top. For paths where TCP is throttled or blocked.
+	UDP Transport = "udp"
+	// KCP is the UDP transport with the full KCP protocol: forward error
+	// correction repairs loss without waiting for a retransmit, and the stream
+	// is encrypted with AES-256 keyed by the token. The best choice on a lossy
+	// or actively-degraded path.
+	KCP Transport = "kcp"
+	// WS is a WebSocket link over plain HTTP — survives CDNs and L7 proxies.
+	// Pooled.
 	WS Transport = "ws"
-	// WSS is a WebSocket stream over TLS — CDN friendly and encrypted.
+	// WSMUX is the WebSocket link, multiplexed.
+	WSMUX Transport = "wsmux"
+	// WSS is a WebSocket link over TLS — CDN friendly and encrypted. Pooled.
 	WSS Transport = "wss"
+	// WSSMUX is the TLS WebSocket link, multiplexed.
+	WSSMUX Transport = "wssmux"
 )
 
-// KnownTransports lists every transport the build understands, for validation
-// and for the interactive menu.
-var KnownTransports = []Transport{TCP, WS, WSS}
+// KnownTransports lists every transport the build understands, in the order the
+// interactive menu presents them.
+var KnownTransports = []Transport{
+	TCP, TCPMUX, STEALTH, UDP, KCP, WS, WSMUX, WSS, WSSMUX,
+}
+
+// Base is the underlying stream provider of a transport.
+type Base string
+
+const (
+	BaseTCP     Base = "tcp"
+	BaseStealth Base = "stealth"
+	BaseUDP     Base = "udp"
+	BaseKCP     Base = "kcp"
+	BaseWS      Base = "ws"
+	BaseWSS     Base = "wss"
+)
+
+// Mode is how forwarded connections share transport links.
+type Mode string
+
+const (
+	// ModeMux multiplexes every forwarded connection onto a single link.
+	ModeMux Mode = "mux"
+	// ModePool gives each forwarded connection its own link, drawn from a warm
+	// pool of pre-dialed spares so no connection pays for a fresh handshake.
+	ModePool Mode = "pool"
+)
+
+// Split returns the base stream provider and the sharing mode of a transport.
+func (t Transport) Split() (Base, Mode) {
+	switch t {
+	case TCP:
+		return BaseTCP, ModePool
+	case TCPMUX:
+		return BaseTCP, ModeMux
+	case STEALTH:
+		return BaseStealth, ModeMux
+	case UDP:
+		return BaseUDP, ModeMux
+	case KCP:
+		return BaseKCP, ModeMux
+	case WS:
+		return BaseWS, ModePool
+	case WSMUX:
+		return BaseWS, ModeMux
+	case WSS:
+		return BaseWSS, ModePool
+	case WSSMUX:
+		return BaseWSS, ModeMux
+	default:
+		return "", ""
+	}
+}
+
+// Base returns just the stream provider of a transport.
+func (t Transport) Base() Base { b, _ := t.Split(); return b }
+
+// Mode returns just the sharing mode of a transport.
+func (t Transport) Mode() Mode { _, m := t.Split(); return m }
+
+// IsMux reports whether a transport multiplexes onto a single link.
+func (t Transport) IsMux() bool { return t.Mode() == ModeMux }
+
+// Describe returns a one-line human summary, used by the menu.
+func (t Transport) Describe() string {
+	switch t {
+	case TCP:
+		return "raw TCP, pooled links — lowest overhead"
+	case TCPMUX:
+		return "raw TCP, multiplexed — fewest sockets"
+	case STEALTH:
+		return "encrypted TCP with no fingerprint — DPI sees random bytes"
+	case UDP:
+		return "reliable stream over UDP datagrams"
+	case KCP:
+		return "UDP + KCP: error correction and AES-256 — best on lossy paths"
+	case WS:
+		return "WebSocket over HTTP, pooled — passes CDNs and L7 proxies"
+	case WSMUX:
+		return "WebSocket over HTTP, multiplexed"
+	case WSS:
+		return "WebSocket over TLS, pooled — encrypted and CDN friendly"
+	case WSSMUX:
+		return "WebSocket over TLS, multiplexed"
+	default:
+		return "unknown"
+	}
+}
 
 // MuxConfig tunes the stream multiplexer that carries every forwarded
 // connection over the single physical transport link.
@@ -77,6 +194,91 @@ func (m MuxConfig) withDefaults() MuxConfig {
 		m.MaxStreamBuffer = 256 * 1024
 	}
 	return m
+}
+
+// KCPConfig tunes the KCP transport: a reliable, retransmitting protocol
+// carried inside UDP datagrams. Defaults target a lossy intercontinental path
+// rather than a clean LAN, because that is the case KCP exists for.
+type KCPConfig struct {
+	// MTU bounds a single datagram; stay under the path MTU to avoid IP
+	// fragmentation, which multiplies effective loss.
+	MTU int `toml:"mtu"`
+	// Interval is the protocol tick in milliseconds. Lower reacts faster and
+	// costs more CPU.
+	Interval int `toml:"interval"`
+	// Resend is the number of duplicate ACKs that trigger a fast retransmit.
+	Resend int `toml:"resend"`
+	// NoDelay enables the low-latency profile (1) instead of the default (0).
+	NoDelay int `toml:"nodelay"`
+	// NoCongestion disables the congestion window (1) so a policed path cannot
+	// throttle the tunnel by inducing loss.
+	NoCongestion int `toml:"nocongestion"`
+	// SndWnd / RcvWnd are the send and receive windows in packets.
+	SndWnd int `toml:"sndwnd"`
+	RcvWnd int `toml:"rcvwnd"`
+	// DataShards / ParityShards enable forward error correction: for every
+	// DataShards packets, ParityShards extra ones are sent so that moderate
+	// loss is repaired instantly instead of waiting for a retransmit.
+	// Both zero disables FEC.
+	DataShards   int `toml:"datashards"`
+	ParityShards int `toml:"parityshards"`
+	// SmuxBuf / StreamBuf size the socket buffers in bytes.
+	SocketBuf int `toml:"socket_buf"`
+}
+
+func (k KCPConfig) withDefaults() KCPConfig {
+	if k.MTU <= 0 {
+		k.MTU = 1350
+	}
+	if k.Interval <= 0 {
+		k.Interval = 20
+	}
+	if k.Resend < 0 {
+		k.Resend = 2
+	}
+	if k.SndWnd <= 0 {
+		k.SndWnd = 1024
+	}
+	if k.RcvWnd <= 0 {
+		k.RcvWnd = 1024
+	}
+	if k.SocketBuf <= 0 {
+		k.SocketBuf = 4 * 1024 * 1024
+	}
+	// Parity without data shards is meaningless to the encoder, so treat a
+	// half-configured pair as FEC disabled rather than failing to start.
+	if k.DataShards <= 0 || k.ParityShards <= 0 {
+		k.DataShards, k.ParityShards = 0, 0
+	}
+	return k
+}
+
+// PoolConfig tunes the warm connection pool used by the non-multiplexed
+// transports (tcp, ws, wss).
+//
+// The client keeps Size links pre-dialed and already past the token handshake,
+// parked and waiting. When the server needs to forward a connection it grabs a
+// ready link instead of paying for a dial plus handshake on the critical path,
+// and the client immediately dials a replacement to refill the pool.
+type PoolConfig struct {
+	// Size is how many spare links to keep warm. 0 falls back to the default.
+	Size int `toml:"size"`
+	// IdleTimeout is how long, in seconds, an unused parked link is kept before
+	// being recycled. Keeps a stale NAT mapping from being handed out.
+	IdleTimeout int `toml:"idle_timeout"`
+}
+
+func (p PoolConfig) withDefaults() PoolConfig {
+	if p.Size <= 0 {
+		p.Size = 8
+	}
+	if p.Size > 512 {
+		p.Size = 512
+	}
+	if p.IdleTimeout <= 0 {
+		p.IdleTimeout = 120
+	}
+	return p
 }
 
 // ReconnectConfig controls the client's exponential-backoff redial loop.
@@ -119,8 +321,10 @@ type ServerConfig struct {
 	TLSCert string `toml:"tls_cert"`
 	TLSKey  string `toml:"tls_key"`
 	// KeepAlive is the TCP keepalive period in seconds for the physical link.
-	KeepAlive int       `toml:"keepalive"`
-	Mux       MuxConfig `toml:"mux"`
+	KeepAlive int        `toml:"keepalive"`
+	Mux       MuxConfig  `toml:"mux"`
+	KCP       KCPConfig  `toml:"kcp"`
+	Pool      PoolConfig `toml:"pool"`
 }
 
 // ClientConfig is the origin side of a tunnel. It dials the server, proves the
@@ -146,6 +350,8 @@ type ClientConfig struct {
 	KeepAlive int             `toml:"keepalive"`
 	Reconnect ReconnectConfig `toml:"reconnect"`
 	Mux       MuxConfig       `toml:"mux"`
+	KCP       KCPConfig       `toml:"kcp"`
+	Pool      PoolConfig      `toml:"pool"`
 }
 
 // LogConfig controls the process logger.
@@ -200,6 +406,10 @@ func (c *Config) applyDefaults() {
 	}
 	c.Server.Mux = c.Server.Mux.withDefaults()
 	c.Client.Mux = c.Client.Mux.withDefaults()
+	c.Server.KCP = c.Server.KCP.withDefaults()
+	c.Client.KCP = c.Client.KCP.withDefaults()
+	c.Server.Pool = c.Server.Pool.withDefaults()
+	c.Client.Pool = c.Client.Pool.withDefaults()
 	c.Client.Reconnect = c.Client.Reconnect.withDefaults()
 	if c.Server.KeepAlive <= 0 {
 		c.Server.KeepAlive = 30

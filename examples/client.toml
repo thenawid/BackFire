@@ -1,7 +1,7 @@
 # backfire client tunnel — the origin side (typically the server abroad).
 # Run with:  backfire -c client.toml
 #
-# The client dials the server, proves the token, and connects each forwarded
+# The client links to the server, proves the token, and connects each forwarded
 # stream to the local target the server asks for. It reconnects on its own if
 # the link drops.
 
@@ -10,13 +10,17 @@ role = "client"
 [client]
   # The server's tunnel address (matches the server's bind).
   server = "203.0.113.10:6060"
-  # Must match the server's transport.
+
+  # Must match the server's transport exactly.
   transport = "tcp"
+
   # Must match the server's token exactly.
   token = "replace-with-a-long-random-token"
 
-  # Only used by "wss". Off is correct with the server's self-signed cert.
+  # Only used by "wss"/"wssmux". Off is correct with the server's self-signed
+  # certificate; turn it on when the server presents a real one.
   tls_verify = false
+  # SNI / certificate name override, useful behind a CDN.
   # server_name = "cdn.example.com"
 
   # Optional allow-list of "host:port" the server may ask this client to dial.
@@ -29,9 +33,30 @@ role = "client"
     min_backoff = 1
     max_backoff = 30
 
+  # Stream multiplexer — applies to the mux-mode transports.
   [client.mux]
     version = 2
     keepalive = 10
+
+  # Warm connection pool — applies to tcp / ws / wss. This is the side that
+  # actually maintains the pool: `size` links stay parked and authenticated,
+  # each replaced the moment the server consumes it.
+  [client.pool]
+    size = 8
+    idle_timeout = 120
+
+  # KCP tuning — applies to udp / kcp. Keep these identical to the server's,
+  # since both ends must agree on MTU and the FEC shard ratio.
+  [client.kcp]
+    mtu = 1350
+    interval = 20
+    resend = 2
+    nodelay = 1
+    nocongestion = 1
+    sndwnd = 1024
+    rcvwnd = 1024
+    datashards = 10
+    parityshards = 3
 
 [log]
   level = "info"

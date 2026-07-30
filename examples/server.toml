@@ -2,17 +2,25 @@
 # Run with:  backfire -c server.toml
 #
 # The server publishes the forwarded ports to the world and waits for the
-# client to dial in. Copy the token into the client's config.
+# client to link in. Copy the token into the client's config.
 
 role = "server"
 
 [server]
   # Address the tunnel link listens on (the client dials this).
+  # For the udp/kcp transports this binds a UDP port instead of TCP.
   bind = "0.0.0.0:6060"
-  # Wire protocol: "tcp", "ws" or "wss". Must match the client.
+
+  # One of: tcp tcpmux stealth udp kcp ws wsmux wss wssmux
+  # Must match the client exactly. See README.md for the full comparison.
+  #   tcp / ws / wss  keep a pool of warm links (see [server.pool])
+  #   everything else multiplexes onto one link (see [server.mux])
   transport = "tcp"
-  # Shared secret. Generate a fresh one with:  backfire  (menu option 7)
+
+  # Shared secret — the whole security boundary. Generate one with:
+  #   backfire   (menu option 7)
   token = "replace-with-a-long-random-token"
+
   # Published port  =  address the client dials on its side.
   forwards = [
     "443=127.0.0.1:443",
@@ -20,14 +28,41 @@ role = "server"
   ]
   keepalive = 30
 
-  # Only used by the "wss" transport. Leave empty for an in-memory
+  # Only used by the "wss"/"wssmux" transports. Leave empty for an in-memory
   # self-signed certificate (the token, not the cert, authenticates peers).
   # tls_cert = "/etc/backfire/fullchain.pem"
   # tls_key  = "/etc/backfire/privkey.pem"
 
+  # Stream multiplexer — applies to the mux-mode transports.
   [server.mux]
     version = 2
     keepalive = 10
+    # max_frame_size = 32768
+    # max_receive_buffer = 4194304
+    # max_stream_buffer = 262144
+
+  # Warm connection pool — applies to tcp / ws / wss.
+  # The client keeps `size` links pre-dialed and already authenticated, so a
+  # forwarded connection never waits for a dial plus handshake.
+  [server.pool]
+    size = 8
+    idle_timeout = 120
+
+  # KCP tuning — applies to the udp / kcp transports.
+  # datashards/parityshards enable forward error correction: for every 10 packets
+  # 3 redundant ones are sent, so moderate loss is repaired without a
+  # retransmit. Raise parity on a worse path, at proportional bandwidth cost.
+  # (Ignored by the plain "udp" transport, which runs without FEC.)
+  [server.kcp]
+    mtu = 1350
+    interval = 20
+    resend = 2
+    nodelay = 1
+    nocongestion = 1
+    sndwnd = 1024
+    rcvwnd = 1024
+    datashards = 10
+    parityshards = 3
 
 [log]
   level = "info"

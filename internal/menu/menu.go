@@ -76,6 +76,7 @@ func createServer() error {
 	cfg := cmd.DefaultServerConfig()
 	cfg.Server.Bind = "0.0.0.0:" + prompt("Tunnel listen port", "6060")
 	cfg.Server.Transport = chooseTransport(cfg.Server.Transport)
+	tuneTransport(cfg.Server.Transport, &cfg.Server.Pool, &cfg.Server.KCP)
 
 	fmt.Println("  Forwards — one per line as '<listen>=<target>' (e.g. 443=127.0.0.1:443).")
 	fmt.Println("  Empty line finishes.")
@@ -100,7 +101,7 @@ func createServer() error {
 		return err
 	}
 	fmt.Printf("\n  installed and started '%s'.\n", name)
-	fmt.Printf("  transport : %s\n", cfg.Server.Transport)
+	fmt.Printf("  transport : %s (%s mode)\n", cfg.Server.Transport, cfg.Server.Transport.Mode())
 	fmt.Printf("  token     : %s\n", cfg.Server.Token)
 	fmt.Println("  Use this token and transport when you create the client tunnel abroad.")
 	return nil
@@ -111,11 +112,12 @@ func createClient() error {
 	cfg := cmd.DefaultClientConfig()
 	cfg.Client.Server = prompt("Server address (host:port)", cfg.Client.Server)
 	cfg.Client.Transport = chooseTransport(cfg.Client.Transport)
+	tuneTransport(cfg.Client.Transport, &cfg.Client.Pool, &cfg.Client.KCP)
 	cfg.Client.Token = prompt("Token (from the server)", "")
 	if cfg.Client.Token == "" {
 		return fmt.Errorf("token is required")
 	}
-	if cfg.Client.Transport == config.WSS {
+	if cfg.Client.Transport.Base() == config.BaseWSS {
 		cfg.Client.TLSVerify = yesNo("Verify the server TLS certificate?", false)
 	}
 	if err := manage.Install(name, cfg); err != nil {
@@ -205,13 +207,53 @@ func pickTunnel() (string, error) {
 	return names[idx-1], nil
 }
 
-func chooseTransport(def config.Transport) config.Transport {
-	fmt.Print("  Transports:")
-	for _, t := range config.KnownTransports {
-		fmt.Printf(" %s", t)
+// tuneTransport asks only the questions that actually apply to the chosen
+// transport: pool size for the pooled ones, error correction for kcp. Everything
+// else keeps its tuned default.
+func tuneTransport(t config.Transport, p *config.PoolConfig, k *config.KCPConfig) {
+	if !t.IsMux() {
+		fmt.Printf("  %s keeps a pool of warm, pre-authenticated links so no\n", t)
+		fmt.Println("  connection waits for a dial or handshake.")
+		if n, err := strconv.Atoi(prompt("  Pool size", "8")); err == nil && n > 0 {
+			p.Size = n
+		}
+		return
 	}
+	if t == config.KCP {
+		fmt.Println("  kcp can send redundant packets so loss is repaired without a")
+		fmt.Println("  retransmit. 10 data : 3 parity suits most paths; raise parity on a")
+		fmt.Println("  worse one, at proportional bandwidth cost.")
+		if n, err := strconv.Atoi(prompt("  Data shards", "10")); err == nil && n > 0 {
+			k.DataShards = n
+		}
+		if n, err := strconv.Atoi(prompt("  Parity shards", "3")); err == nil && n > 0 {
+			k.ParityShards = n
+		}
+	}
+}
+
+// chooseTransport lists every transport with a one-line explanation and accepts
+// either its number or its name.
+func chooseTransport(def config.Transport) config.Transport {
 	fmt.Println()
-	val := prompt("Transport", string(def))
+	fmt.Println("  Transports:")
+	for i, t := range config.KnownTransports {
+		marker := " "
+		if t == def {
+			marker = "*"
+		}
+		fmt.Printf("   %s %2d) %-8s %s\n", marker, i+1, t, t.Describe())
+	}
+	val := prompt("Transport (number or name)", string(def))
+
+	// A number picks by position in the list.
+	if n, err := strconv.Atoi(val); err == nil {
+		if n >= 1 && n <= len(config.KnownTransports) {
+			return config.KnownTransports[n-1]
+		}
+		fmt.Printf("  (no transport %d, keeping %s)\n", n, def)
+		return def
+	}
 	for _, t := range config.KnownTransports {
 		if string(t) == val {
 			return t

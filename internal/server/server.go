@@ -1,29 +1,47 @@
 // Package server implements the exposed half of a tunnel — typically the Iran
 // VPS. It publishes the forwarded ports to the outside world, waits for the
-// client to dial in and prove the token, then hands each inbound end-user
-// connection to the client as its own multiplexed stream.
+// client to link in and prove the token, then hands each inbound end-user
+// connection to the client.
+//
+// How a connection is handed over depends on the transport's mode:
+//
+//   - mux  — one physical link carries every connection as its own multiplexed
+//     stream. The server opens a stream and writes the target on it.
+//   - pool — the client parks a set of pre-authenticated links; the server takes
+//     a ready one and writes the target directly on it, so no dial or handshake
+//     happens while an end user is waiting.
 package server
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/thenawid/backfire/config"
 	"github.com/thenawid/backfire/internal/mux"
+	"github.com/thenawid/backfire/internal/pool"
 	"github.com/thenawid/backfire/internal/protocol"
 	"github.com/thenawid/backfire/internal/transport"
 	"github.com/thenawid/backfire/internal/utils"
 )
+
+// errNoClient is returned when a forwarded connection arrives before any client
+// has linked in, so there is nowhere to send it.
+var errNoClient = errors.New("no client linked")
 
 // Server is a running exposed-side tunnel.
 type Server struct {
 	cfg      config.ServerConfig
 	log      *utils.Logger
 	forwards []config.Forward
+	isMux    bool
 
 	mu      sync.Mutex
-	current *mux.Session // the newest authenticated client session, or nil
+	current *mux.Session // mux mode: newest authenticated session, or nil
+	ready   *pool.Ready  // pool mode: queue of parked links
 }
 
 // New builds a Server from its config, resolving the forward table up front so
@@ -33,7 +51,16 @@ func New(cfg config.ServerConfig, log *utils.Logger) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{cfg: cfg, log: log.With("server"), forwards: forwards}, nil
+	s := &Server{
+		cfg:      cfg,
+		log:      log.With("server"),
+		forwards: forwards,
+		isMux:    cfg.Transport.IsMux(),
+	}
+	if !s.isMux {
+		s.ready = pool.NewReady(utils.Seconds(cfg.Pool.IdleTimeout))
+	}
+	return s, nil
 }
 
 // Run publishes the forwarded ports and accepts client links until ctx is
@@ -48,14 +75,20 @@ func (s *Server) Run(ctx context.Context) error {
 		return err
 	}
 	defer ln.Close()
-	s.log.Infof("tunnel listening on %s (%s)", s.cfg.Bind, s.cfg.Transport)
+	s.log.Infof("tunnel listening on %s (%s, %s mode)",
+		s.cfg.Bind, s.cfg.Transport, s.cfg.Transport.Mode())
 
-	// Publish every forwarded port once; the listeners outlive individual
-	// client sessions and simply refuse connections while no client is linked.
+	// Publish every forwarded port once; the listeners outlive individual client
+	// sessions and simply refuse connections while no client is linked.
 	for _, f := range s.forwards {
 		if err := s.publish(ctx, f); err != nil {
 			return err
 		}
+	}
+
+	if !s.isMux {
+		go s.reapLoop(ctx)
+		defer s.ready.Close()
 	}
 
 	// Close the tunnel listener when the context ends so Accept unblocks.
@@ -75,19 +108,48 @@ func (s *Server) Run(ctx context.Context) error {
 				return err
 			}
 		}
-		go s.onClientLink(conn)
+		go s.onLink(conn)
 	}
 }
 
-// onClientLink authenticates a dialed-in client and, on success, installs its
-// multiplexed session as the current one.
-func (s *Server) onClientLink(conn net.Conn) {
+// reapLoop periodically retires parked links that have gone stale, so a quiet
+// tunnel does not hand out a connection a NAT has already forgotten.
+func (s *Server) reapLoop(ctx context.Context) {
+	interval := utils.Seconds(s.cfg.Pool.IdleTimeout) / 2
+	if interval < 5*time.Second {
+		interval = 5 * time.Second
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if n := s.ready.ReapStale(); n > 0 {
+				s.log.Debugf("reaped %d stale pooled link(s)", n)
+			}
+		}
+	}
+}
+
+// onLink authenticates an inbound link and installs it according to the mode.
+func (s *Server) onLink(conn net.Conn) {
 	utils.SetKeepAlive(conn, s.cfg.KeepAlive)
 	if err := protocol.ServerHandshake(conn, s.cfg.Token); err != nil {
 		s.log.Warnf("reject %s: %v", conn.RemoteAddr(), err)
 		conn.Close()
 		return
 	}
+	if s.isMux {
+		s.onMuxLink(conn)
+		return
+	}
+	s.onPooledLink(conn)
+}
+
+// onMuxLink installs an authenticated link as the current multiplexed session.
+func (s *Server) onMuxLink(conn net.Conn) {
 	sess, err := mux.Server(conn, s.cfg.Mux)
 	if err != nil {
 		s.log.Warnf("mux %s: %v", conn.RemoteAddr(), err)
@@ -108,6 +170,31 @@ func (s *Server) onClientLink(conn net.Conn) {
 	}
 	s.clearCurrent(sess)
 	s.log.Infof("client from %s disconnected", conn.RemoteAddr())
+}
+
+// onPooledLink parks an authenticated link in the ready queue.
+func (s *Server) onPooledLink(conn net.Conn) {
+	role, err := pool.ReadRole(conn)
+	if err != nil {
+		s.log.Warnf("read link role from %s: %v", conn.RemoteAddr(), err)
+		conn.Close()
+		return
+	}
+	switch role {
+	case pool.RoleData:
+		if !s.ready.Put(conn) {
+			conn.Close()
+			return
+		}
+		s.log.Debugf("parked link from %s (%d ready)", conn.RemoteAddr(), s.ready.Len())
+	case pool.RoleControl:
+		// Reserved for metrics/health signalling. Hold it open until the peer
+		// hangs up, which is how each side notices the tunnel has gone.
+		s.log.Infof("client control link from %s", conn.RemoteAddr())
+		_, _ = io.Copy(io.Discard, conn)
+		conn.Close()
+		s.log.Infof("client control link from %s closed", conn.RemoteAddr())
+	}
 }
 
 func (s *Server) setCurrent(sess *mux.Session) {
@@ -136,7 +223,7 @@ func (s *Server) session() *mux.Session {
 }
 
 // publish opens one forwarded listener and pumps every accepted end-user
-// connection to the current client session.
+// connection to the client.
 func (s *Server) publish(ctx context.Context, f config.Forward) error {
 	ln, err := net.Listen("tcp", f.Listen)
 	if err != nil {
@@ -153,32 +240,42 @@ func (s *Server) publish(ctx context.Context, f config.Forward) error {
 			if err != nil {
 				return
 			}
-			go s.forward(user, f.Target)
+			go s.forward(ctx, user, f.Target)
 		}
 	}()
 	return nil
 }
 
-// forward carries one end-user connection over a new stream to the client,
-// which dials f.Target on its side.
-func (s *Server) forward(user net.Conn, target string) {
-	sess := s.session()
-	if sess == nil {
-		s.log.Warnf("dropping %s: no client linked", user.RemoteAddr())
-		user.Close()
-		return
-	}
-	stream, err := sess.OpenStream()
+// forward carries one end-user connection to the client, which dials target on
+// its side.
+func (s *Server) forward(ctx context.Context, user net.Conn, target string) {
+	link, err := s.linkFor(ctx)
 	if err != nil {
-		s.log.Warnf("open stream: %v", err)
+		s.log.Warnf("dropping %s: %v", user.RemoteAddr(), err)
 		user.Close()
 		return
 	}
-	if err := protocol.WriteTarget(stream, target); err != nil {
+	if err := protocol.WriteTarget(link, target); err != nil {
 		s.log.Warnf("write target: %v", err)
-		stream.Close()
+		link.Close()
 		user.Close()
 		return
 	}
-	utils.Pipe(user, stream)
+	utils.Pipe(user, link)
+}
+
+// linkFor returns the stream that will carry one forwarded connection: a fresh
+// mux stream, or a ready link from the pool.
+func (s *Server) linkFor(ctx context.Context) (net.Conn, error) {
+	if s.isMux {
+		sess := s.session()
+		if sess == nil {
+			return nil, errNoClient
+		}
+		return sess.OpenStream()
+	}
+	// Wait briefly: a link may be in flight while the client refills the pool.
+	waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return s.ready.Get(waitCtx)
 }

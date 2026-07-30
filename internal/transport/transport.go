@@ -1,8 +1,11 @@
 // Package transport abstracts "how do two peers get a raw byte stream between
-// them" away from everything above it. Each transport turns the configured
-// wire protocol into an ordinary net.Conn on the client side and a net.Listener
-// on the server side; the auth handshake and the stream multiplexer are layered
-// on top and neither knows nor cares which transport carries them.
+// them" away from everything above it.
+//
+// Each Base turns one wire protocol into an ordinary net.Conn on the client
+// side and a net.Listener on the server side. The token handshake, the stream
+// multiplexer and the connection pool are layered on top and none of them know
+// which base carries them — which is why nine configurable transports need only
+// five stream providers plus two sharing modes.
 package transport
 
 import (
@@ -21,14 +24,22 @@ type Transport interface {
 	Dial(ctx context.Context, cfg config.ClientConfig) (net.Conn, error)
 }
 
-// Get returns the transport implementation for a configured wire protocol.
+// Get returns the stream provider backing a configured transport. Callers that
+// care about mux-vs-pool consult config.Transport.Mode instead; this only
+// resolves how a single raw link is obtained.
 func Get(t config.Transport) (Transport, error) {
-	switch t {
-	case config.TCP:
+	switch t.Base() {
+	case config.BaseTCP:
 		return tcpTransport{}, nil
-	case config.WS:
+	case config.BaseStealth:
+		return stealthTransport{}, nil
+	case config.BaseUDP:
+		return kcpTransport{stealth: false}, nil
+	case config.BaseKCP:
+		return kcpTransport{stealth: true}, nil
+	case config.BaseWS:
 		return wsTransport{secure: false}, nil
-	case config.WSS:
+	case config.BaseWSS:
 		return wsTransport{secure: true}, nil
 	default:
 		return nil, fmt.Errorf("unsupported transport %q", t)

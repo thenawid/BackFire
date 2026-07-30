@@ -160,6 +160,15 @@ func writeTemp(c *config.Config) (string, error) {
 	return path, nil
 }
 
-func TestTunnelTCP(t *testing.T) { runTunnel(t, config.TCP) }
-func TestTunnelWS(t *testing.T)  { runTunnel(t, config.WS) }
-func TestTunnelWSS(t *testing.T) { runTunnel(t, config.WSS) }
+// TestTunnelAllTransports drives a real tunnel over every transport the build
+// supports — both multiplexed and pooled, both TCP- and UDP-based — and asserts
+// a byte round-trip through the whole stack each time.
+func TestTunnelAllTransports(t *testing.T) {
+	for _, tr := range config.KnownTransports {
+		tr := tr
+		t.Run(string(tr), func(t *testing.T) {
+			t.Parallel()
+			runTunnel(t, tr)
+		})
+	}
+}

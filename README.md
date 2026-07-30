@@ -29,14 +29,19 @@ its own flow-controlled stream over a single physical connection.
 
 ## Why backfire
 
-- **Multi-transport.** `tcp` for raw speed, `ws` to ride through CDNs and layer-7
-  proxies, `wss` for the same plus TLS. Same tunnel, one keyword to switch.
+- **Nine transports.** Raw TCP, multiplexed TCP, fingerprint-free stealth, UDP,
+  UDP+KCP with error correction, and WebSocket over HTTP or TLS in both pooled
+  and multiplexed flavours. One keyword switches between them.
 - **Stream multiplexing.** All forwarded connections share one link via
   [smux](https://github.com/xtaci/smux), with per-stream flow control — no
   connection storms, no per-connection handshake tax.
+- **Warm connection pool.** The non-multiplexed transports keep links pre-dialed
+  and pre-authenticated, so no end user ever waits for a dial plus handshake on
+  an intercontinental path.
 - **Authenticated, replay-resistant handshake.** Peers prove a shared token with
   an HMAC-SHA256 challenge/response; the token never crosses the wire, even on a
-  plain `tcp` link.
+  plain `tcp` link. The server answers nothing until a peer proves it speaks the
+  protocol, so a scanner learns nothing.
 - **Self-healing client.** A dropped link is redialed with exponential backoff
   and full jitter, so the tunnel comes back on its own after any outage.
 - **Zero-touch operation.** The menu writes the config, generates the systemd
@@ -100,16 +105,54 @@ Each entry is `<listen>=<target>`:
 
 ## Transports
 
-| Transport | Encrypted | Blends in with | Use when |
-|---|---|---|---|
-| `tcp` | no | nothing | the path is clean and you want lowest overhead |
-| `ws`  | no | HTTP/WebSocket | a CDN or L7 proxy sits in front |
-| `wss` | yes (TLS) | HTTPS/WebSocket | you want encryption and CDN compatibility |
+Nine names, but only two dimensions. Every transport is a **base** (how one raw
+stream is obtained) combined with a **mode** (how forwarded connections share
+those streams) — which is why nine options need only five stream providers.
 
-For `wss`, leaving `tls_cert`/`tls_key` empty generates an in-memory self-signed
-certificate — that's fine, because peers authenticate by the **token**, not the
-certificate chain. Point them at a real certificate if you terminate a named
-domain.
+| Transport | Base | Mode | Encrypted | Use when |
+|---|---|---|---|---|
+| `tcp` | TCP | pool | no | clean path, lowest possible overhead |
+| `tcpmux` | TCP | mux | no | many concurrent connections, fewest sockets |
+| `stealth` | TCP | mux | **yes** (AES-256-GCM) | DPI is fingerprinting your traffic |
+| `udp` | UDP | mux | no | TCP is throttled or blocked on the path |
+| `kcp` | UDP | mux | **yes** (AES-256) | lossy or actively degraded path |
+| `ws` | WebSocket | pool | no | a CDN or L7 proxy sits in front |
+| `wsmux` | WebSocket | mux | no | as `ws`, with many connections |
+| `wss` | WebSocket/TLS | pool | **yes** (TLS) | encryption plus CDN compatibility |
+| `wssmux` | WebSocket/TLS | mux | **yes** (TLS) | as `wss`, with many connections |
+
+### mux vs pool
+
+**`mux`** multiplexes every forwarded connection onto a single physical link as
+its own flow-controlled stream. One socket, no per-connection setup cost. The
+trade-off is that all streams share one link's fate and one congestion window.
+
+**`pool`** gives each forwarded connection its own link, drawn from a set the
+client keeps pre-dialed and already past the token handshake. Nothing waits for a
+round trip on the critical path, and one stalled connection cannot affect
+another. Costs more sockets. Tune with `[server.pool] size`.
+
+### Notes on specific transports
+
+**`stealth`** wraps TCP in an encrypted record layer keyed from the tunnel token.
+Unlike TLS there is no handshake to fingerprint, no certificate, no version
+negotiation, and no fixed header — the only plaintext is a 32-byte random salt
+per side, after which every record is indistinguishable from random bytes. Deep
+packet inspection has nothing to match on.
+
+**`udp` vs `kcp`** — a tunnel link must be a reliable, ordered stream to carry the
+handshake and multiplexer, which raw UDP is not. Both transports use the KCP
+protocol over UDP datagrams to supply that. `udp` runs it bare, the lightest way
+to get a reliable stream over UDP. `kcp` adds Reed-Solomon **forward error
+correction** (10 data : 3 parity by default, so moderate loss is repaired without
+waiting for a retransmit) and **AES-256** keyed from the token. Both ends must
+agree on `mtu` and the shard ratio. They forward TCP services; forwarding a UDP
+service is on the roadmap.
+
+**`wss` / `wssmux`** — leaving `tls_cert`/`tls_key` empty generates an in-memory
+self-signed certificate. That's fine, because peers authenticate by the **token**,
+not the certificate chain. Point them at a real certificate if you terminate a
+named domain, and set `tls_verify = true` on the client.
 
 ---
 
@@ -145,26 +188,28 @@ round-trip through the full stack (handshake, mux, framing, forwarding).
 
 ```
 main.go                 engine/menu dispatch
-config/                 TOML schema, parsing, validation
+config/                 TOML schema, transport table, validation
 cmd/                    default configs for the menu
 internal/
   app/                  version, paths, engine dispatch
   protocol/             token handshake + stream target framing
-  transport/            tcp, ws, wss (net.Conn / net.Listener providers)
-  mux/                  smux wrapper
-  server/               exposed side: publish ports, open streams
-  client/               origin side: dial, reconnect, serve streams
+  transport/            stream providers: tcp, stealth, udp/kcp, ws, wss
+  mux/                  smux wrapper (mux mode)
+  pool/                 warm pre-authenticated link pool (pool mode)
+  server/               exposed side: publish ports, hand off connections
+  client/               origin side: link, reconnect, serve targets
   manage/               systemd units + tunnel lifecycle
   menu/                 interactive CLI
   utils/                logger, token, pipe helpers
-  e2e/                  end-to-end tunnel test
+  e2e/                  end-to-end tunnel test across all transports
 ```
 
 ---
 
 ## Roadmap
 
-- More transports (KCP/QUIC for lossy paths), UDP forwarding
+- Forwarding UDP *services* (the udp/kcp transports carry TCP services today)
+- A QUIC transport
 - Optional web panel and Telegram status reporting
 - Per-tunnel metrics and a health watchdog
 - Prebuilt release binaries + checksum-verified installs
