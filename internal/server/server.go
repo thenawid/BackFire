@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/thenawid/backfire/config"
+	"github.com/thenawid/backfire/internal/metrics"
 	"github.com/thenawid/backfire/internal/mux"
 	"github.com/thenawid/backfire/internal/pool"
 	"github.com/thenawid/backfire/internal/protocol"
@@ -38,10 +39,19 @@ type Server struct {
 	log      *utils.Logger
 	forwards []config.Forward
 	isMux    bool
+	// stats is where traffic and connection counts are reported; nil when the
+	// engine runs without a metrics registry.
+	stats *metrics.Tunnel
 
 	mu      sync.Mutex
 	current *mux.Session // mux mode: newest authenticated session, or nil
 	ready   *pool.Ready  // pool mode: queue of parked links
+}
+
+// WithMetrics attaches a metrics tunnel so traffic is accounted for.
+func (s *Server) WithMetrics(t *metrics.Tunnel) *Server {
+	s.stats = t
+	return s
 }
 
 // New builds a Server from its config, resolving the forward table up front so
@@ -157,6 +167,7 @@ func (s *Server) onMuxLink(conn net.Conn) {
 		return
 	}
 	s.setCurrent(sess)
+	s.setLinked(true)
 	s.log.Infof("client linked from %s", conn.RemoteAddr())
 
 	// The server never expects the client to open streams; draining Accept is
@@ -169,6 +180,7 @@ func (s *Server) onMuxLink(conn net.Conn) {
 		stream.Close()
 	}
 	s.clearCurrent(sess)
+	s.setLinked(false)
 	s.log.Infof("client from %s disconnected", conn.RemoteAddr())
 }
 
@@ -186,6 +198,7 @@ func (s *Server) onPooledLink(conn net.Conn) {
 			conn.Close()
 			return
 		}
+		s.setLinked(true)
 		s.log.Debugf("parked link from %s (%d ready)", conn.RemoteAddr(), s.ready.Len())
 	case pool.RoleControl:
 		// Reserved for metrics/health signalling. Hold it open until the peer
@@ -194,6 +207,13 @@ func (s *Server) onPooledLink(conn net.Conn) {
 		_, _ = io.Copy(io.Discard, conn)
 		conn.Close()
 		s.log.Infof("client control link from %s closed", conn.RemoteAddr())
+	}
+}
+
+// setLinked records peer presence for the panel and the bot.
+func (s *Server) setLinked(v bool) {
+	if s.stats != nil {
+		s.stats.SetLinked(v)
 	}
 }
 
@@ -259,6 +279,12 @@ func (s *Server) forward(ctx context.Context, user net.Conn, target string) {
 		s.log.Warnf("write target: %v", err)
 		link.Close()
 		user.Close()
+		return
+	}
+	if s.stats != nil {
+		s.stats.OpenConn()
+		defer s.stats.CloseConn()
+		utils.PipeMetered(user, link, s.stats)
 		return
 	}
 	utils.Pipe(user, link)

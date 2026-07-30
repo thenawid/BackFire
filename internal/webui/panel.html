@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>backfire panel</title>
+<style>
+  :root{
+    --bg:#070b14; --bg2:#0a1020; --card:#0d1526; --card2:#111a2e;
+    --line:#1b2740; --line2:#243352;
+    --txt:#e6edf8; --dim:#8296b8; --dim2:#5d719a;
+    --blue:#3b82f6; --blue2:#60a5fa; --blue3:#1d4ed8;
+    --cyan:#22d3ee; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444;
+    --r:14px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:
+      radial-gradient(1100px 520px at 12% -8%, rgba(59,130,246,.16), transparent 60%),
+      radial-gradient(900px 460px at 88% 0%, rgba(34,211,238,.10), transparent 55%),
+      var(--bg);
+    color:var(--txt);
+    font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    min-height:100vh; padding:22px; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1280px;margin:0 auto}
+
+  /* ---------- login ---------- */
+  #login{display:flex;align-items:center;justify-content:center;min-height:82vh}
+  .lbox{
+    background:linear-gradient(180deg,var(--card2),var(--card));
+    border:1px solid var(--line);border-radius:18px;padding:34px 30px;width:min(400px,94vw);
+    box-shadow:0 24px 60px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.04);
+  }
+  .lbox h1{font-size:24px;letter-spacing:.4px;margin-bottom:6px}
+  .lbox p{color:var(--dim);font-size:13px;margin-bottom:20px}
+  input,select{
+    width:100%;background:#070d1a;border:1px solid var(--line2);color:var(--txt);
+    padding:12px 14px;border-radius:10px;font-size:15px;outline:none;transition:.15s;
+  }
+  input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(59,130,246,.18)}
+  .btn{
+    background:linear-gradient(180deg,var(--blue2),var(--blue));border:0;color:#04101f;
+    font-weight:650;padding:12px 16px;border-radius:10px;cursor:pointer;width:100%;
+    margin-top:14px;font-size:15px;transition:.15s;
+  }
+  .btn:hover{filter:brightness(1.08)}
+  .btn:active{transform:translateY(1px)}
+  .err{color:var(--bad);font-size:13px;margin-top:12px;min-height:18px}
+
+  /* ---------- header ---------- */
+  header{
+    display:flex;align-items:center;justify-content:space-between;gap:16px;
+    margin-bottom:20px;flex-wrap:wrap;
+  }
+  .brand{display:flex;align-items:center;gap:12px}
+  .logo{
+    width:38px;height:38px;border-radius:11px;flex:none;
+    background:linear-gradient(140deg,var(--blue2),var(--blue3));
+    display:grid;place-items:center;font-size:19px;
+    box-shadow:0 6px 18px rgba(59,130,246,.4);
+  }
+  .brand b{font-size:19px;letter-spacing:.3px}
+  .brand span{color:var(--dim);font-size:12px;display:block;margin-top:-2px}
+  .hmeta{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .chip{
+    background:var(--card);border:1px solid var(--line);border-radius:999px;
+    padding:7px 14px;font-size:12px;color:var(--dim);white-space:nowrap;
+  }
+  .chip b{color:var(--txt);font-weight:600}
+  .chip.ro{border-color:rgba(245,158,11,.4);color:var(--warn)}
+
+  /* ---------- gauges ---------- */
+  .grid{display:grid;gap:14px}
+  .gauges{grid-template-columns:repeat(auto-fit,minmax(210px,1fr));margin-bottom:14px}
+  .gcard{
+    background:linear-gradient(180deg,var(--card2),var(--card));
+    border:1px solid var(--line);border-radius:var(--r);padding:20px;text-align:center;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.03);
+  }
+  .ring{position:relative;width:118px;height:118px;margin:0 auto 12px}
+  .ring svg{transform:rotate(-90deg)}
+  .ring .val{
+    position:absolute;inset:0;display:grid;place-items:center;
+    font-size:26px;font-weight:700;letter-spacing:-.5px;
+  }
+  .ring .val small{display:block;font-size:11px;color:var(--dim);font-weight:500;margin-top:2px}
+  .glabel{color:var(--dim);font-size:11px;letter-spacing:1.3px;text-transform:uppercase}
+  .gsub{font-size:12.5px;color:var(--txt);margin-top:5px;opacity:.9}
+
+  /* ---------- stat strip ---------- */
+  .stats{grid-template-columns:repeat(auto-fit,minmax(210px,1fr));margin-bottom:26px}
+  .scard{
+    background:linear-gradient(180deg,var(--card2),var(--card));
+    border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;
+    display:flex;align-items:center;gap:14px;
+  }
+  .sicon{
+    width:40px;height:40px;border-radius:11px;flex:none;display:grid;place-items:center;
+    background:rgba(59,130,246,.14);border:1px solid rgba(59,130,246,.28);font-size:17px;
+  }
+  .sicon.up{background:rgba(34,211,238,.13);border-color:rgba(34,211,238,.28)}
+  .slabel{color:var(--dim);font-size:10.5px;letter-spacing:1.2px;text-transform:uppercase}
+  .sval{font-size:19px;font-weight:670;margin-top:2px;letter-spacing:-.3px}
+
+  /* ---------- tunnels ---------- */
+  .sechead{display:flex;align-items:center;gap:11px;margin-bottom:14px}
+  .sechead h2{font-size:17px;font-weight:660}
+  .count{
+    background:rgba(59,130,246,.16);border:1px solid rgba(59,130,246,.32);
+    color:var(--blue2);border-radius:999px;padding:2px 11px;font-size:12px;font-weight:600;
+  }
+  .tunnels{grid-template-columns:repeat(auto-fill,minmax(390px,1fr))}
+  .tcard{
+    background:linear-gradient(180deg,var(--card2),var(--card));
+    border:1px solid var(--line);border-radius:var(--r);padding:18px;
+    transition:border-color .2s, box-shadow .2s;
+  }
+  .tcard.live{border-color:rgba(59,130,246,.55);box-shadow:0 0 0 1px rgba(59,130,246,.16),0 10px 34px rgba(59,130,246,.10)}
+  .tcard.down{border-color:rgba(239,68,68,.35)}
+  .thead{display:flex;align-items:center;gap:9px;margin-bottom:15px;flex-wrap:wrap}
+  .dot{width:9px;height:9px;border-radius:50%;flex:none}
+  .dot.on{background:var(--ok);box-shadow:0 0 9px var(--ok)}
+  .dot.off{background:var(--bad);box-shadow:0 0 9px rgba(239,68,68,.7)}
+  .dot.idle{background:var(--warn);box-shadow:0 0 9px rgba(245,158,11,.7)}
+  .tname{font-weight:660;font-size:15.5px;flex:1;letter-spacing:.2px}
+  .tag{
+    border-radius:7px;padding:3px 9px;font-size:10.5px;font-weight:650;letter-spacing:.6px;
+    text-transform:uppercase;background:rgba(59,130,246,.15);
+    border:1px solid rgba(59,130,246,.32);color:var(--blue2);
+  }
+  .tag.role{background:rgba(148,163,184,.1);border-color:rgba(148,163,184,.24);color:var(--dim)}
+  .kv{display:grid;grid-template-columns:1fr 1fr;gap:12px 16px;margin-bottom:14px}
+  .k{color:var(--dim);font-size:10.5px;letter-spacing:1.1px;text-transform:uppercase}
+  .v{font-size:14.5px;font-weight:600;margin-top:3px}
+  .v.good{color:var(--ok)} .v.mid{color:var(--warn)} .v.bad{color:var(--bad)}
+  .traffic{display:flex;gap:16px;font-size:13px;margin-bottom:11px;flex-wrap:wrap}
+  .traffic span{display:flex;align-items:center;gap:5px}
+  .traffic b{font-weight:640}
+  .dn{color:var(--blue2)} .up{color:var(--cyan)} .tt{color:var(--dim)}
+  .spark{width:100%;height:46px;display:block;margin-bottom:8px}
+  .rates{
+    display:flex;justify-content:space-between;color:var(--dim);font-size:11.5px;
+    padding-top:9px;border-top:1px solid var(--line);
+  }
+  .acts{display:flex;gap:9px;margin-top:14px}
+  .abtn{
+    flex:1;background:var(--card);border:1px solid var(--line2);color:var(--txt);
+    padding:9px;border-radius:9px;cursor:pointer;font-size:12.5px;font-weight:560;
+    display:flex;align-items:center;justify-content:center;gap:6px;transition:.15s;
+  }
+  .abtn:hover{border-color:var(--blue);background:rgba(59,130,246,.12);color:var(--blue2)}
+  .abtn:disabled{opacity:.4;cursor:not-allowed}
+
+  /* ---------- modal ---------- */
+  .modal{
+    position:fixed;inset:0;background:rgba(2,6,14,.82);backdrop-filter:blur(4px);
+    display:none;align-items:center;justify-content:center;padding:22px;z-index:50;
+  }
+  .modal.open{display:flex}
+  .mbox{
+    background:var(--card);border:1px solid var(--line2);border-radius:16px;
+    width:min(940px,96vw);max-height:86vh;display:flex;flex-direction:column;
+    box-shadow:0 30px 70px rgba(0,0,0,.6);
+  }
+  .mhead{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:16px 20px;border-bottom:1px solid var(--line);
+  }
+  .mhead h3{font-size:16px}
+  .x{background:none;border:0;color:var(--dim);font-size:24px;cursor:pointer;line-height:1;padding:0 4px}
+  .x:hover{color:var(--txt)}
+  .mbody{padding:18px 20px;overflow:auto}
+  pre{
+    background:#050a14;border:1px solid var(--line);border-radius:10px;padding:14px;
+    font:12px/1.65 ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    white-space:pre-wrap;word-break:break-word;color:#b9cbe6;
+  }
+  .dl{display:grid;grid-template-columns:auto 1fr;gap:10px 18px;font-size:13.5px}
+  .dl dt{color:var(--dim)}
+  .dl dd{font-weight:600}
+  .empty{
+    text-align:center;color:var(--dim);padding:48px 20px;
+    border:1px dashed var(--line2);border-radius:var(--r);
+  }
+  .foot{text-align:center;color:var(--dim);font-size:11.5px;margin-top:26px;opacity:.75}
+  @media(max-width:560px){ body{padding:14px} .kv{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+
+<!-- login -->
+<div id="login">
+  <form class="lbox" onsubmit="doLogin(event)">
+    <h1>backfire</h1>
+    <p>Enter the panel login code.</p>
+    <input id="pw" type="password" placeholder="Login code" autocomplete="current-password" autofocus>
+    <button class="btn" type="submit">Sign in</button>
+    <div class="err" id="lerr"></div>
+  </form>
+</div>
+
+<!-- panel -->
+<div class="wrap" id="panel" style="display:none">
+  <header>
+    <div class="brand">
+      <div class="logo">🔥</div>
+      <div>
+        <b>backfire</b>
+        <span id="os">—</span>
+      </div>
+    </div>
+    <div class="hmeta">
+      <div class="chip">uptime <b id="uptime">—</b></div>
+      <div class="chip">version <b id="ver">—</b></div>
+      <div class="chip ro" id="rochip" style="display:none">monitoring only</div>
+    </div>
+  </header>
+
+  <div class="grid gauges" id="gauges"></div>
+  <div class="grid stats" id="stats"></div>
+
+  <div class="sechead">
+    <h2>Tunnels</h2><span class="count" id="tcount">0</span>
+  </div>
+  <div class="grid tunnels" id="tunnels"></div>
+
+  <div class="foot">refreshing every 3s</div>
+</div>
+
+<!-- modal -->
+<div class="modal" id="modal" onclick="if(event.target===this)closeModal()">
+  <div class="mbox">
+    <div class="mhead"><h3 id="mtitle">—</h3><button class="x" onclick="closeModal()">&times;</button></div>
+    <div class="mbody" id="mbody"></div>
+  </div>
+</div>
+
+<script>
+// ---------- helpers ----------
+const $ = id => document.getElementById(id);
+
+function bytes(n){
+  n = Number(n)||0;
+  if(n < 1024) return n.toFixed(0)+' B';
+  const u = ['KiB','MiB','GiB','TiB','PiB']; let i = -1;
+  do { n /= 1024; i++; } while(n >= 1024 && i < u.length-1);
+  return n.toFixed(1)+' '+u[i];
+}
+const rate = n => bytes(n)+'/s';
+function esc(s){
+  return String(s??'').replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function dur(s){
+  s = Number(s)||0;
+  const d = Math.floor(s/86400), h = Math.floor(s%86400/3600), m = Math.floor(s%3600/60);
+  if(d) return d+'d '+h+'h';
+  if(h) return h+'h '+m+'m';
+  return m+'m';
+}
+// A gauge turns blue → amber → red as it fills, so a glance is enough.
+function tone(p){ return p >= 90 ? 'var(--bad)' : p >= 75 ? 'var(--warn)' : 'var(--blue2)'; }
+
+// ---------- login ----------
+async function doLogin(e){
+  e.preventDefault();
+  $('lerr').textContent = '';
+  const r = await fetch('/api/login', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({password: $('pw').value})
+  });
+  if(!r.ok){ $('lerr').textContent = 'Wrong code.'; return; }
+  start();
+}
+function start(){
+  $('login').style.display = 'none';
+  $('panel').style.display = '';
+  tick(); setInterval(tick, 3000);
+}
+
+// ---------- render ----------
+function ring(pct, label, sub){
+  const p = Math.max(0, Math.min(100, Number(pct)||0));
+  const R = 50, C = 2*Math.PI*R, off = C*(1-p/100), col = tone(p);
+  return `<div class="gcard">
+    <div class="ring">
+      <svg width="118" height="118" viewBox="0 0 118 118">
+        <circle cx="59" cy="59" r="${R}" fill="none" stroke="var(--line2)" stroke-width="9"/>
+        <circle cx="59" cy="59" r="${R}" fill="none" stroke="${col}" stroke-width="9"
+                stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${off}"
+                style="transition:stroke-dashoffset .5s ease,stroke .3s"/>
+      </svg>
+      <div class="val">${p.toFixed(0)}<small>%</small></div>
+    </div>
+    <div class="glabel">${label}</div>
+    <div class="gsub">${sub}</div>
+  </div>`;
+}
+
+function statCard(icon, cls, label, val){
+  return `<div class="scard">
+    <div class="sicon ${cls}">${icon}</div>
+    <div><div class="slabel">${label}</div><div class="sval">${val}</div></div>
+  </div>`;
+}
+
+// sparkline of recent throughput; two overlaid series, download and upload.
+function spark(hist){
+  if(!hist || hist.length < 2) return '<svg class="spark"></svg>';
+  const W = 360, H = 46, pts = hist.slice(-60);
+  const max = Math.max(1, ...pts.map(p => Math.max(p.rx_rate||0, p.tx_rate||0)));
+  const path = key => pts.map((p,i) => {
+    const x = i/(pts.length-1)*W;
+    const y = H - ((p[key]||0)/max)*(H-6) - 3;
+    return (i?'L':'M')+x.toFixed(1)+' '+y.toFixed(1);
+  }).join(' ');
+  return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+    <defs><linearGradient id="fade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="var(--blue)" stop-opacity=".30"/>
+      <stop offset="100%" stop-color="var(--blue)" stop-opacity="0"/>
+    </linearGradient></defs>
+    <path d="${path('rx_rate')} L ${W} ${H} L 0 ${H} Z" fill="url(#fade)"/>
+    <path d="${path('rx_rate')}" fill="none" stroke="var(--blue2)" stroke-width="1.8"/>
+    <path d="${path('tx_rate')}" fill="none" stroke="var(--cyan)" stroke-width="1.5" opacity=".85"/>
+  </svg>`;
+}
+
+function pingClass(ms){ return ms < 0 ? '' : ms < 80 ? 'good' : ms < 200 ? 'mid' : 'bad'; }
+
+function tunnelCard(t, readOnly){
+  // Three states worth distinguishing: unit stopped, unit up but no peer, live.
+  const state = !t.running ? 'down' : (t.linked ? 'live' : 'idle');
+  const dot   = state === 'live' ? 'on' : state === 'down' ? 'off' : 'idle';
+  const cls   = state === 'live' ? 'live' : state === 'down' ? 'down' : '';
+  const ping  = t.ping_ms >= 0 ? t.ping_ms.toFixed(0)+' ms' : '—';
+  const fwd   = (t.forwarded && t.forwarded.length) ? t.forwarded.join(', ') : '—';
+  const n     = esc(t.name);
+  return `<div class="tcard ${cls}">
+    <div class="thead">
+      <span class="dot ${dot}"></span>
+      <span class="tname">${n}</span>
+      ${t.role ? `<span class="tag role">${esc(t.role)}</span>` : ''}
+      <span class="tag">${esc(t.transport||'—')}</span>
+    </div>
+    <div class="kv">
+      <div><div class="k">Tunnel port</div><div class="v">${t.port||'—'}</div></div>
+      <div><div class="k">Ping</div><div class="v ${pingClass(t.ping_ms)}">${ping}</div></div>
+      <div><div class="k">Forwarded ports</div><div class="v">${esc(fwd)}</div></div>
+      <div><div class="k">Connections</div><div class="v">${t.connections||0}</div></div>
+    </div>
+    <div class="traffic">
+      <span class="dn">↓ <b>${bytes(t.rx_bytes)}</b></span>
+      <span class="up">↑ <b>${bytes(t.tx_bytes)}</b></span>
+      <span class="tt">Σ <b>${bytes(t.total_bytes)}</b></span>
+    </div>
+    ${spark(t.history)}
+    <div class="rates">
+      <span>↓ ${rate(t.rx_rate)} · ↑ ${rate(t.tx_rate)}</span>
+      <span>${t.running ? 'up '+dur(t.uptime_seconds) : esc(t.status||'inactive')}</span>
+    </div>
+    <div class="acts">
+      <button class="abtn" onclick="showLogs('${n}')">📄 Logs</button>
+      <button class="abtn" onclick="showDetails('${n}')">ⓘ Details</button>
+      ${readOnly ? '' :
+        `<button class="abtn" onclick="ctl('${n}','restart')">↻ Restart</button>`}
+    </div>
+  </div>`;
+}
+
+let latest = null;
+
+async function tick(){
+  let d;
+  try { const r = await fetch('/api/overview'); if(!r.ok) throw 0; d = await r.json(); }
+  catch { return; }
+  latest = d;
+
+  const h = d.host;
+  $('os').textContent  = h.os + ' · ' + h.cores + ' cores';
+  $('uptime').textContent = d.uptime;
+  $('ver').textContent = d.version;
+  $('rochip').style.display = d.read_only ? '' : 'none';
+
+  $('gauges').innerHTML =
+    ring(h.cpu_percent, 'CPU', h.cores + ' cores') +
+    ring(h.mem_percent, 'Memory', bytes(h.mem_used)+' / '+bytes(h.mem_total)) +
+    ring(h.disk_percent,'Disk',   bytes(h.disk_used)+' / '+bytes(h.disk_total)) +
+    ring(h.swap_percent,'Swap',   bytes(h.swap_used)+' / '+bytes(h.swap_total));
+
+  const t = d.totals;
+  $('stats').innerHTML =
+    statCard('↓','','Download', rate(h.net_rx_rate)) +
+    statCard('↑','up','Upload', rate(h.net_tx_rate)) +
+    statCard('Σ','','Tunnel traffic', bytes(t.total_bytes)) +
+    statCard('◈','up','Linked', t.linked+' / '+t.count);
+
+  $('tcount').textContent = d.tunnels.length;
+  $('tunnels').innerHTML = d.tunnels.length
+    ? d.tunnels.map(x => tunnelCard(x, d.read_only)).join('')
+    : '<div class="empty">No tunnels installed yet. Create one with <b>sudo backfire</b>.</div>';
+}
+
+// ---------- modal ----------
+function openModal(title, html){
+  $('mtitle').textContent = title;
+  $('mbody').innerHTML = html;
+  $('modal').classList.add('open');
+}
+function closeModal(){ $('modal').classList.remove('open'); }
+document.addEventListener('keydown', e => { if(e.key === 'Escape') closeModal(); });
+
+async function showLogs(name){
+  openModal('Logs — '+name, '<pre>loading…</pre>');
+  try{
+    const r = await fetch('/api/logs?tunnel='+encodeURIComponent(name));
+    const d = await r.json();
+    openModal('Logs — '+name, '<pre>'+esc((d.lines||[]).join('\n') || 'no output')+'</pre>');
+  }catch{ openModal('Logs — '+name, '<pre>could not read logs</pre>'); }
+}
+
+function showDetails(name){
+  const t = (latest?.tunnels||[]).find(x => x.name === name);
+  if(!t) return;
+  const row = (k,v) => '<dt>'+esc(k)+'</dt><dd>'+esc(v)+'</dd>';
+  openModal('Details — '+name, '<dl class="dl">' +
+    row('Role', t.role||'—') +
+    row('Transport', t.transport||'—') +
+    row('Tunnel port', t.port||'—') +
+    row('Forwarded ports', (t.forwarded||[]).join(', ')||'—') +
+    row('Service status', t.status||'—') +
+    row('Peer linked', t.linked ? 'yes' : 'no') +
+    row('Ping', t.ping_ms >= 0 ? t.ping_ms.toFixed(1)+' ms' : 'unknown') +
+    row('Open connections', t.connections||0) +
+    row('Total connections', t.total_connections||0) +
+    row('Downloaded', bytes(t.rx_bytes)) +
+    row('Uploaded', bytes(t.tx_bytes)) +
+    row('Total traffic', bytes(t.total_bytes)) +
+    row('Engine uptime', t.running ? dur(t.uptime_seconds) : '—') +
+  '</dl>');
+}
+
+async function ctl(name, action){
+  const r = await fetch('/api/control', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({tunnel:name, action})
+  });
+  if(!r.ok){ alert(await r.text()); return; }
+  tick();
+}
+
+// An existing session cookie skips the login form.
+fetch('/api/overview').then(r => { if(r.ok) start(); });
+</script>
+</body>
+</html>

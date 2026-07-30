@@ -44,6 +44,9 @@ its own flow-controlled stream over a single physical connection.
   protocol, so a scanner learns nothing.
 - **Self-healing client.** A dropped link is redialed with exponential backoff
   and full jitter, so the tunnel comes back on its own after any outage.
+- **Web panel and Telegram bot.** A self-contained browser dashboard with live
+  gauges and per-tunnel throughput charts, and a bot that reports status, sends
+  backups and alerts you when something crosses a threshold.
 - **Zero-touch operation.** The menu writes the config, generates the systemd
   unit (`Restart=always`), enables it and starts it. Reboot-safe by default.
 - **Small and auditable.** A handful of focused packages, no sprawling
@@ -86,7 +89,9 @@ write them by hand too — see [`examples/server.toml`](examples/server.toml) an
 [`examples/client.toml`](examples/client.toml).
 
 ```bash
-backfire -c /etc/backfire/main.toml      # engine mode (what systemd runs)
+backfire -c /etc/backfire/main.toml      # engine mode (what a tunnel unit runs)
+backfire -webui                          # web panel (what backfire-webui runs)
+backfire -bot                            # telegram bot (what backfire-bot runs)
 backfire                                 # interactive menu
 backfire -v                              # version
 ```
@@ -184,6 +189,53 @@ round-trip through the full stack (handshake, mux, framing, forwarding).
 
 ---
 
+## Web panel
+
+`sudo backfire` → **Web panel** → *Set up*. It asks for a port, suggests a login
+code (press Enter to accept it) and asks whether the panel should be
+monitoring-only. Then it writes the unit and starts it.
+
+The panel shows host CPU / memory / disk / swap, uplink throughput, and a card
+per tunnel with its transport, ports, ping, live traffic, a throughput sparkline
+and its journal logs. It refreshes every three seconds.
+
+It is one embedded HTML file with **no external assets** — no CDN, no fonts, no
+scripts to fetch — so it works on a server with no outbound internet access and
+under a strict content-security policy.
+
+> The login code is the only thing protecting it. Use a long one, and prefer
+> reaching the panel over an SSH tunnel or a VPN rather than opening its port to
+> the world.
+
+## Telegram bot
+
+`sudo backfire` → **Telegram bot** → *Set up*. Paste the token from
+[@BotFather](https://t.me/BotFather) and your numeric ID from
+[@userinfobot](https://t.me/userinfobot).
+
+| Command | What it does |
+|---|---|
+| `/status` | every tunnel: state, ports, traffic, ping |
+| `/system` | processor, memory, disk, uptime |
+| `/backup` | sends every config and setting here as a `.tar.gz` |
+| `/alerts` | current alert thresholds |
+| `/webui` | panel link and login code |
+| `/support` | project links |
+
+Every reply carries an inline keyboard, and tapping a button **edits the message
+in place** — so the chat stays one live panel instead of a growing transcript.
+
+With alerts on, the bot messages you when CPU, memory or disk crosses its
+threshold — once on the way up and once on recovery, not once per check — and
+whenever a tunnel loses or regains its peer.
+
+**The bot only answers the admin IDs you list.** Anyone else is refused and told
+nothing but their own Telegram ID. It refuses to start with an empty admin list
+rather than answering to the world.
+
+> `/backup` sends live tunnel tokens over Telegram. That is the point of the
+> command, but treat the resulting file as a secret.
+
 ## Project layout
 
 ```
@@ -200,9 +252,22 @@ internal/
   client/               origin side: link, reconnect, serve targets
   manage/               systemd units + tunnel lifecycle
   menu/                 interactive CLI
-  utils/                logger, token, pipe helpers
+  metrics/              per-tunnel counters, history, cross-process state files
+  sysstat/              host CPU / memory / disk / network from /proc
+  webui/                web panel (embedded, self-contained)
+  telegram/             bot: commands, keyboards, alerts
+  utils/                logger, token, metered pipe helpers
   e2e/                  end-to-end tunnel test across all transports
 ```
+
+### How the panel sees the tunnels
+
+Each tunnel is its own systemd unit, so the panel and the bot are separate
+processes from the engines whose traffic they report and cannot read their
+counters directly. Every engine publishes a snapshot to `/run/backfire/<name>.json`
+on the sampling interval, and the readers just read that directory. `/run` is a
+tmpfs, so a reboot clears it and a tunnel that is no longer running leaves
+nothing behind to misreport.
 
 ---
 
@@ -210,8 +275,7 @@ internal/
 
 - Forwarding UDP *services* (the udp/kcp transports carry TCP services today)
 - A QUIC transport
-- Optional web panel and Telegram status reporting
-- Per-tunnel metrics and a health watchdog
+- HTTPS for the panel, and restore-from-backup in the bot
 - Prebuilt release binaries + checksum-verified installs
 
 ---

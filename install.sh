@@ -34,6 +34,9 @@ case "$(uname -m)" in
 esac
 
 mkdir -p "$CONFIG_DIR"
+# Engines publish their live state here for the panel and the bot to read.
+# /run is a tmpfs, so this is recreated on boot by the engines themselves.
+mkdir -p /run/backfire
 
 # ---- ensure a usable Go toolchain -------------------------------------------
 have_go() {

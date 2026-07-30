@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/thenawid/backfire/config"
+	"github.com/thenawid/backfire/internal/metrics"
 	"github.com/thenawid/backfire/internal/mux"
 	"github.com/thenawid/backfire/internal/pool"
 	"github.com/thenawid/backfire/internal/protocol"
@@ -35,6 +36,15 @@ type Client struct {
 	log     *utils.Logger
 	allowed map[string]bool // nil means "allow any target"
 	isMux   bool
+	// stats is where traffic and connection counts are reported; nil when the
+	// engine runs without a metrics registry.
+	stats *metrics.Tunnel
+}
+
+// WithMetrics attaches a metrics tunnel so traffic is accounted for.
+func (c *Client) WithMetrics(t *metrics.Tunnel) *Client {
+	c.stats = t
+	return c
 }
 
 // New builds a Client from its config.
@@ -94,6 +104,7 @@ func (c *Client) serveMuxOnce(ctx context.Context) error {
 		return err
 	}
 	defer sess.Close()
+	defer c.setLinked(false)
 	c.log.Infof("linked to %s (%s, mux mode)", c.cfg.Server, c.cfg.Transport)
 
 	// Close the session when the context ends so AcceptStream unblocks.
@@ -166,6 +177,13 @@ func (c *Client) poolWorker(ctx context.Context, worker int) {
 	}
 }
 
+// setLinked records peer presence for the panel and the bot.
+func (c *Client) setLinked(v bool) {
+	if c.stats != nil {
+		c.stats.SetLinked(v)
+	}
+}
+
 // serveLink reads the target the server chose for this stream/link, dials it
 // locally and splices the two ends together.
 func (c *Client) serveLink(link net.Conn) {
@@ -188,6 +206,12 @@ func (c *Client) serveLink(link net.Conn) {
 		link.Close()
 		return
 	}
+	if c.stats != nil {
+		c.stats.OpenConn()
+		defer c.stats.CloseConn()
+		utils.PipeMetered(local, link, c.stats)
+		return
+	}
 	utils.Pipe(local, link)
 }
 
@@ -199,6 +223,10 @@ func (c *Client) dialAuthenticated(ctx context.Context) (net.Conn, error) {
 	}
 	dialCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
+
+	// The dial plus handshake is a full round trip to the peer, so timing it
+	// gives the panel a latency figure without any extra probe traffic.
+	start := time.Now()
 	conn, err := tr.Dial(dialCtx, c.cfg)
 	if err != nil {
 		return nil, err
@@ -206,6 +234,10 @@ func (c *Client) dialAuthenticated(ctx context.Context) (net.Conn, error) {
 	if err := protocol.ClientHandshake(conn, c.cfg.Token); err != nil {
 		conn.Close()
 		return nil, err
+	}
+	if c.stats != nil {
+		c.stats.SetPing(time.Since(start))
+		c.stats.SetLinked(true)
 	}
 	return conn, nil
 }

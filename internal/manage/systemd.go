@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/thenawid/backfire/config"
@@ -87,8 +88,11 @@ func Control(verb, name string) error {
 }
 
 // Status returns the short `systemctl is-active` result for a tunnel.
-func Status(name string) string {
-	out, _ := exec.Command("systemctl", "is-active", app.ServiceName(name)).Output()
+func Status(name string) string { return statusOf(app.ServiceName(name)) }
+
+// statusOf returns `systemctl is-active` for any unit.
+func statusOf(unit string) string {
+	out, _ := exec.Command("systemctl", "is-active", unit).Output()
 	s := strings.TrimSpace(string(out))
 	if s == "" {
 		return "unknown"
@@ -146,4 +150,17 @@ func validateName(name string) error {
 		}
 	}
 	return nil
+}
+
+// Logs returns the last n journal lines for a tunnel's unit.
+func Logs(name string, n int) (string, error) {
+	if err := validateName(name); err != nil {
+		return "", err
+	}
+	if n <= 0 {
+		n = 40
+	}
+	out, err := exec.Command("journalctl", "-u", app.ServiceName(name),
+		"-n", strconv.Itoa(n), "--no-pager", "--output", "short-iso").CombinedOutput()
+	return strings.TrimRight(string(out), "\n"), err
 }

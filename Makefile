@@ -3,7 +3,7 @@ PREFIX  ?= /usr/local
 BINDIR  := $(PREFIX)/bin
 VERSION := $(shell cat VERSION 2>/dev/null)
 
-.PHONY: all build install uninstall test vet tidy clean run
+.PHONY: all build install uninstall test vet tidy clean run panel bot
 
 all: build
 
@@ -38,3 +38,11 @@ clean:
 ## run: open the interactive menu from source
 run:
 	go run .
+
+## panel: run the web panel from source (needs /etc/backfire/webui.json)
+panel:
+	go run . -webui
+
+## bot: run the telegram bot from source (needs /etc/backfire/telegram.json)
+bot:
+	go run . -bot
