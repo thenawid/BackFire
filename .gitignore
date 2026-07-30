@@ -1,0 +1,14 @@
+# build artifacts
+/backfire
+*.exe
+*.test
+*.out
+
+# local configs / secrets — never commit real tunnel tokens
+*.local.toml
+/etc-backfire/
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/

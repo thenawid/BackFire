@@ -1,0 +1,19 @@
+backfire
+Copyright (c) 2026 thenawid
+Licensed under the MIT License. See the LICENSE file for the full text.
+
+--------------------------------------------------------------------------------
+Acknowledgements
+--------------------------------------------------------------------------------
+
+backfire is an independent, from-scratch implementation. Its architecture — a
+single binary that runs either the exposed or the origin half of a reverse
+tunnel, driven by an interactive menu and per-tunnel systemd units — was
+inspired by the design of the BackPack project (https://github.com/AminMGMT/BackPack).
+No source code was copied from that project; backfire shares none of its code
+and carries its own license.
+
+Third-party libraries (each under its own permissive license):
+  - github.com/BurntSushi/toml     (MIT)
+  - github.com/gorilla/websocket   (BSD-2-Clause)
+  - github.com/xtaci/smux          (MIT)

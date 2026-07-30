@@ -1,0 +1,37 @@
+# backfire client tunnel — the origin side (typically the server abroad).
+# Run with:  backfire -c client.toml
+#
+# The client dials the server, proves the token, and connects each forwarded
+# stream to the local target the server asks for. It reconnects on its own if
+# the link drops.
+
+role = "client"
+
+[client]
+  # The server's tunnel address (matches the server's bind).
+  server = "203.0.113.10:6060"
+  # Must match the server's transport.
+  transport = "tcp"
+  # Must match the server's token exactly.
+  token = "replace-with-a-long-random-token"
+
+  # Only used by "wss". Off is correct with the server's self-signed cert.
+  tls_verify = false
+  # server_name = "cdn.example.com"
+
+  # Optional allow-list of "host:port" the server may ask this client to dial.
+  # Empty = allow any (the server decides). Set it to be strict:
+  # allowed_targets = ["127.0.0.1:443", "127.0.0.1:22"]
+
+  keepalive = 30
+
+  [client.reconnect]
+    min_backoff = 1
+    max_backoff = 30
+
+  [client.mux]
+    version = 2
+    keepalive = 10
+
+[log]
+  level = "info"

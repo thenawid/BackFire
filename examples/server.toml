@@ -1,0 +1,33 @@
+# backfire server tunnel — the exposed side (typically the Iran VPS).
+# Run with:  backfire -c server.toml
+#
+# The server publishes the forwarded ports to the world and waits for the
+# client to dial in. Copy the token into the client's config.
+
+role = "server"
+
+[server]
+  # Address the tunnel link listens on (the client dials this).
+  bind = "0.0.0.0:6060"
+  # Wire protocol: "tcp", "ws" or "wss". Must match the client.
+  transport = "tcp"
+  # Shared secret. Generate a fresh one with:  backfire  (menu option 7)
+  token = "replace-with-a-long-random-token"
+  # Published port  =  address the client dials on its side.
+  forwards = [
+    "443=127.0.0.1:443",
+    "2222=127.0.0.1:22",
+  ]
+  keepalive = 30
+
+  # Only used by the "wss" transport. Leave empty for an in-memory
+  # self-signed certificate (the token, not the cert, authenticates peers).
+  # tls_cert = "/etc/backfire/fullchain.pem"
+  # tls_key  = "/etc/backfire/privkey.pem"
+
+  [server.mux]
+    version = 2
+    keepalive = 10
+
+[log]
+  level = "info"
