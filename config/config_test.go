@@ -123,6 +123,119 @@ func TestPoolDefaults(t *testing.T) {
 	}
 }
 
+func TestCarrierProperties(t *testing.T) {
+	cases := []struct {
+		c        Carrier
+		port     bool
+		raw      bool
+		protocol int
+	}{
+		{CarrierUDP, true, false, 0},
+		{CarrierTCP, true, false, 0},
+		{CarrierICMP, false, true, 1},
+		{CarrierIPIP, false, true, 4},
+		{CarrierGRE, false, true, 47},
+		{CarrierVRRP, false, true, 112},
+		{CarrierBIP, false, true, 253},
+	}
+	for _, c := range cases {
+		if c.c.NeedsPort() != c.port {
+			t.Errorf("%s NeedsPort = %v, want %v", c.c, c.c.NeedsPort(), c.port)
+		}
+		if c.c.IsRaw() != c.raw {
+			t.Errorf("%s IsRaw = %v, want %v", c.c, c.c.IsRaw(), c.raw)
+		}
+		if c.c.Protocol() != c.protocol {
+			t.Errorf("%s Protocol = %d, want %d", c.c, c.c.Protocol(), c.protocol)
+		}
+		if c.c.Describe() == "unknown" {
+			t.Errorf("%s has no description", c.c)
+		}
+	}
+	if len(KnownCarriers) != len(cases) {
+		t.Errorf("KnownCarriers has %d entries, tested %d", len(KnownCarriers), len(cases))
+	}
+}
+
+func TestBackhaulValidate(t *testing.T) {
+	base := func() *Config {
+		c := &Config{
+			Family: FamilyBackhaul,
+			Role:   RoleServer,
+			Backhaul: BackhaulConfig{
+				Carrier:  CarrierICMP,
+				Token:    "psk",
+				LocalIP:  "10.0.0.1",
+				RemoteIP: "10.0.0.2",
+			},
+		}
+		c.applyDefaults()
+		return c
+	}
+
+	if err := base().Validate(); err != nil {
+		t.Errorf("a valid backhaul config was rejected: %v", err)
+	}
+
+	// A udp carrier needs a port.
+	c := base()
+	c.Backhaul.Carrier = CarrierUDP
+	c.Backhaul.Port = 0
+	if err := c.Validate(); err == nil {
+		t.Error("expected an error: udp carrier with no port")
+	}
+
+	// Spoofing needs a raw carrier.
+	c = base()
+	c.Backhaul.Carrier = CarrierUDP
+	c.Backhaul.Port = 2000
+	c.Backhaul.Spoof = true
+	if err := c.Validate(); err == nil {
+		t.Error("expected an error: spoofing on a non-raw carrier")
+	}
+
+	// Bad tunnel address.
+	c = base()
+	c.Backhaul.LocalIP = "not-an-ip"
+	if err := c.Validate(); err == nil {
+		t.Error("expected an error: invalid local_ip")
+	}
+
+	// Missing token.
+	c = base()
+	c.Backhaul.Token = ""
+	if err := c.Validate(); err == nil {
+		t.Error("expected an error: missing token")
+	}
+}
+
+// TestBackhaulForwardsUsePeerIP checks that a bare forward port on a backhaul
+// tunnel targets the peer's tunnel IP rather than loopback, since the service is
+// across the layer-3 link.
+func TestBackhaulForwardsUsePeerIP(t *testing.T) {
+	b := BackhaulConfig{RemoteIP: "10.5.0.2", Forwards: []string{"8080"}}
+	fs, err := b.ParsedForwards()
+	if err != nil {
+		t.Fatalf("ParsedForwards: %v", err)
+	}
+	if len(fs) != 1 || fs[0].Target != "10.5.0.2:8080" {
+		t.Errorf("forward target = %v, want 10.5.0.2:8080", fs)
+	}
+}
+
+func TestFamilyDefaultsToBackpack(t *testing.T) {
+	c := &Config{Role: RoleServer, Server: ServerConfig{
+		Bind: "0.0.0.0:6060", Transport: TCP, Token: "t", Forwards: []string{"80"},
+	}}
+	c.applyDefaults()
+	if c.Family != FamilyBackpack {
+		t.Errorf("family defaulted to %q, want %q", c.Family, FamilyBackpack)
+	}
+	if err := c.Validate(); err != nil {
+		t.Errorf("a backpack config without an explicit family was rejected: %v", err)
+	}
+}
+
 func TestValidateRejectsBadRole(t *testing.T) {
 	c := &Config{Role: "bogus"}
 	c.applyDefaults()

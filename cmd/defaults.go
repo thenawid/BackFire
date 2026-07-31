@@ -24,6 +24,29 @@ func DefaultServerConfig() *config.Config {
 	}
 }
 
+// DefaultBackhaulConfig returns a ready-to-run layer-3 tunnel config for the
+// given role, with a fresh token and the point-to-point tunnel addresses filled
+// in for each side.
+func DefaultBackhaulConfig(role config.Role) *config.Config {
+	local, remote := "10.200.0.1", "10.200.0.2"
+	if role == config.RoleClient {
+		local, remote = "10.200.0.2", "10.200.0.1"
+	}
+	return &config.Config{
+		Family: config.FamilyBackhaul,
+		Role:   role,
+		Backhaul: config.BackhaulConfig{
+			Carrier:  config.CarrierICMP,
+			Port:     2000,
+			Token:    utils.GenToken(24),
+			LocalIP:  local,
+			RemoteIP: remote,
+			MTU:      1400,
+		},
+		Log: config.LogConfig{Level: "info"},
+	}
+}
+
 // DefaultClientConfig returns a ready-to-run client tunnel config.
 func DefaultClientConfig() *config.Config {
 	return &config.Config{

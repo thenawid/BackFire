@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/thenawid/backfire/config"
+	"github.com/thenawid/backfire/internal/backhaul"
 	"github.com/thenawid/backfire/internal/client"
 	"github.com/thenawid/backfire/internal/metrics"
 	"github.com/thenawid/backfire/internal/server"
@@ -28,6 +29,12 @@ func Run(ctx context.Context, name string, cfg *config.Config) error {
 	done := make(chan struct{})
 	defer close(done)
 	go reg.Run(done)
+
+	// The Backhaul family is a layer-3 tunnel, dispatched separately from the
+	// BackPack transports.
+	if cfg.Family == config.FamilyBackhaul {
+		return runBackhaul(ctx, name, cfg, reg, done, log)
+	}
 
 	switch cfg.Role {
 	case config.RoleServer:
@@ -51,6 +58,35 @@ func Run(ctx context.Context, name string, cfg *config.Config) error {
 	default:
 		return fmt.Errorf("unknown role %q", cfg.Role)
 	}
+}
+
+// runBackhaul starts the layer-3 tunnel engine with its own metrics tunnel.
+func runBackhaul(ctx context.Context, name string, cfg *config.Config,
+	reg *metrics.Registry, done chan struct{}, log *utils.Logger) error {
+	stats := reg.Register(name, string(cfg.Role),
+		string(cfg.Backhaul.Carrier), cfg.Backhaul.Port, backhaulPorts(cfg.Backhaul))
+	go stats.PublishLoop(done)
+
+	eng, err := backhaul.New(cfg.Backhaul, cfg.Role, log)
+	if err != nil {
+		return err
+	}
+	return eng.WithMetrics(stats).Run(ctx)
+}
+
+// backhaulPorts lists the published ports of a backhaul config, for display.
+func backhaulPorts(cfg config.BackhaulConfig) []int {
+	forwards, err := cfg.ParsedForwards()
+	if err != nil {
+		return nil
+	}
+	out := make([]int, 0, len(forwards))
+	for _, f := range forwards {
+		if p := portOf(f.Listen); p != 0 {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // portOf extracts the port from a host:port address, or 0 if it has none.

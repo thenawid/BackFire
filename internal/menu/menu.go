@@ -148,6 +148,9 @@ func overview() {
 func createServer() error {
 	title("Create a server tunnel")
 	note("This is the exposed side — the VPS users connect to.")
+	if chooseFamily() {
+		return createBackhaul(config.RoleServer)
+	}
 
 	name := ask("Tunnel name", "main")
 	cfg := cmd.DefaultServerConfig()
@@ -197,6 +200,9 @@ func createServer() error {
 func createClient() error {
 	title("Create a client tunnel")
 	note("This is the origin side — the server abroad that holds the real services.")
+	if chooseFamily() {
+		return createBackhaul(config.RoleClient)
+	}
 
 	name := ask("Tunnel name", "main")
 	cfg := cmd.DefaultClientConfig()

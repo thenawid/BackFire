@@ -363,10 +363,220 @@ type LogConfig struct {
 // Config is a whole tunnel file. Exactly one of Server / Client is used,
 // selected by Role.
 type Config struct {
-	Role   Role         `toml:"role"`
-	Server ServerConfig `toml:"server"`
-	Client ClientConfig `toml:"client"`
-	Log    LogConfig    `toml:"log"`
+	// Family selects which kind of tunnel this file describes. It defaults to
+	// the BackPack family so every existing config keeps working unchanged.
+	Family   Family         `toml:"family"`
+	Role     Role           `toml:"role"`
+	Server   ServerConfig   `toml:"server"`
+	Client   ClientConfig   `toml:"client"`
+	Backhaul BackhaulConfig `toml:"backhaul"`
+	Log      LogConfig      `toml:"log"`
+}
+
+// Family is the class of tunnel a config describes.
+type Family string
+
+const (
+	// FamilyBackpack is the userspace reverse tunnel that forwards TCP
+	// connections over one of the nine transports — the default.
+	FamilyBackpack Family = "backpack"
+	// FamilyBackhaul is a layer-3 point-to-point tunnel over a TUN device,
+	// carried inside another IP protocol (icmp, gre, ipip, …) with optional
+	// source-address spoofing, for paths where even the BackPack transports are
+	// filtered.
+	FamilyBackhaul Family = "backhaul"
+)
+
+// Carrier is the protocol a Backhaul tunnel hides its encrypted layer-3 frames
+// inside. The point is camouflage: to a filter, an icmp carrier looks like ping
+// traffic and a gre carrier looks like an ordinary GRE tunnel.
+type Carrier string
+
+const (
+	CarrierUDP  Carrier = "udp"  // UDP datagrams on a port
+	CarrierTCP  Carrier = "tcp"  // a single framed TCP stream
+	CarrierICMP Carrier = "icmp" // raw ICMP echo request/reply
+	CarrierIPIP Carrier = "ipip" // raw IP, protocol 4 (looks like IP-in-IP)
+	CarrierGRE  Carrier = "gre"  // raw IP, protocol 47 (looks like GRE)
+	CarrierVRRP Carrier = "vrrp" // raw IP, protocol 112 (looks like VRRP)
+	CarrierBIP  Carrier = "bip"  // raw IP, experimental protocol 253
+)
+
+// KnownCarriers lists every Backhaul carrier, in menu order.
+var KnownCarriers = []Carrier{
+	CarrierUDP, CarrierICMP, CarrierIPIP, CarrierGRE, CarrierVRRP, CarrierTCP, CarrierBIP,
+}
+
+// NeedsPort reports whether a carrier binds a transport port (udp/tcp) rather
+// than riding a raw IP protocol.
+func (c Carrier) NeedsPort() bool { return c == CarrierUDP || c == CarrierTCP }
+
+// IsRaw reports whether a carrier uses a raw IP socket keyed by protocol number.
+func (c Carrier) IsRaw() bool {
+	switch c {
+	case CarrierICMP, CarrierIPIP, CarrierGRE, CarrierVRRP, CarrierBIP:
+		return true
+	default:
+		return false
+	}
+}
+
+// Protocol returns the IP protocol number a raw carrier uses, or 0 for the
+// port-based carriers.
+func (c Carrier) Protocol() int {
+	switch c {
+	case CarrierICMP:
+		return 1
+	case CarrierIPIP:
+		return 4
+	case CarrierGRE:
+		return 47
+	case CarrierVRRP:
+		return 112
+	case CarrierBIP:
+		return 253 // RFC 3692 experimentation range
+	default:
+		return 0
+	}
+}
+
+// Describe returns a one-line human summary of a carrier for the menu.
+func (c Carrier) Describe() string {
+	switch c {
+	case CarrierUDP:
+		return "UDP datagrams — simple and fast"
+	case CarrierICMP:
+		return "raw ICMP echo — looks like ping traffic"
+	case CarrierIPIP:
+		return "raw IP proto 4 — looks like IP-in-IP"
+	case CarrierGRE:
+		return "raw IP proto 47 — looks like a GRE tunnel"
+	case CarrierVRRP:
+		return "raw IP proto 112 — looks like VRRP"
+	case CarrierTCP:
+		return "a single framed TCP stream"
+	case CarrierBIP:
+		return "raw IP proto 253 — experimental camouflage"
+	default:
+		return "unknown"
+	}
+}
+
+func validCarrier(c Carrier) bool {
+	for _, k := range KnownCarriers {
+		if k == c {
+			return true
+		}
+	}
+	return false
+}
+
+// BackhaulConfig is a layer-3 tunnel. Both peers share a token; the TUN device
+// on each side is given LocalIP, and traffic to RemoteIP is carried encrypted
+// over the chosen carrier to the peer.
+type BackhaulConfig struct {
+	// Carrier is the protocol the encrypted frames hide inside.
+	Carrier Carrier `toml:"carrier"`
+	// Peer is the other server's public address. The client dials it; the
+	// server may leave it blank to learn the peer from the first packet.
+	Peer string `toml:"peer"`
+	// Port is the carrier port for the udp/tcp carriers.
+	Port int `toml:"port"`
+	// Token is the shared secret; the AES-256 frame key is derived from it.
+	Token string `toml:"token"`
+	// LocalIP / RemoteIP are the TUN interface addresses on each end.
+	LocalIP  string `toml:"local_ip"`
+	RemoteIP string `toml:"remote_ip"`
+	// MTU of the TUN device.
+	MTU int `toml:"mtu"`
+	// IFName is the TUN interface name (auto-generated when blank).
+	IFName string `toml:"ifname"`
+	// Spoof, when set, sends carrier packets with a forged source address so the
+	// real origin is hidden. Requires a raw carrier.
+	Spoof bool `toml:"spoof"`
+	// SpoofSource is the forged source address used when Spoof is on.
+	SpoofSource string `toml:"spoof_source"`
+	// Forwards optionally publishes ports over the established tunnel, each
+	// "<listen>=<target>" like a BackPack server, with the target reached across
+	// the layer-3 link.
+	Forwards []string `toml:"forwards"`
+	// Raw is an advanced escape hatch: extra key=value lines appended verbatim,
+	// for options the menu does not expose. It is never interpreted by backfire
+	// itself, only stored and shown.
+	Raw string `toml:"raw"`
+}
+
+func (b BackhaulConfig) withDefaults() BackhaulConfig {
+	if b.MTU <= 0 {
+		b.MTU = 1400
+	}
+	if b.Carrier == "" {
+		b.Carrier = CarrierICMP
+	}
+	return b
+}
+
+func (b BackhaulConfig) validate() error {
+	if !validCarrier(b.Carrier) {
+		return fmt.Errorf("backhaul.carrier %q is unknown", b.Carrier)
+	}
+	if b.Token == "" {
+		return fmt.Errorf("backhaul.token is required")
+	}
+	if b.LocalIP == "" || net.ParseIP(b.LocalIP) == nil {
+		return fmt.Errorf("backhaul.local_ip %q is not a valid IP", b.LocalIP)
+	}
+	if b.RemoteIP == "" || net.ParseIP(b.RemoteIP) == nil {
+		return fmt.Errorf("backhaul.remote_ip %q is not a valid IP", b.RemoteIP)
+	}
+	if b.Peer != "" && net.ParseIP(b.Peer) == nil {
+		return fmt.Errorf("backhaul.peer %q is not a valid IP", b.Peer)
+	}
+	if b.Carrier.NeedsPort() {
+		if b.Port <= 0 || b.Port > 65535 {
+			return fmt.Errorf("backhaul.port %d is out of range for the %s carrier", b.Port, b.Carrier)
+		}
+	}
+	if b.Spoof {
+		if !b.Carrier.IsRaw() {
+			return fmt.Errorf("spoofing needs a raw carrier (icmp/ipip/gre/vrrp/bip), not %s", b.Carrier)
+		}
+		if b.SpoofSource != "" && net.ParseIP(b.SpoofSource) == nil {
+			return fmt.Errorf("backhaul.spoof_source %q is not a valid IP", b.SpoofSource)
+		}
+	}
+	for _, raw := range b.Forwards {
+		if _, err := ParseForward(raw); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ParsedForwards returns the parsed forward table for a backhaul config.
+func (b BackhaulConfig) ParsedForwards() ([]Forward, error) {
+	out := make([]Forward, 0, len(b.Forwards))
+	for _, raw := range b.Forwards {
+		f, err := ParseForward(raw)
+		if err != nil {
+			return nil, err
+		}
+		// In backhaul the target is reached across the layer-3 link, so a bare
+		// port means "the same port on the peer's tunnel IP".
+		if f.Target == net.JoinHostPort("127.0.0.1", portOf(f.Listen)) {
+			f.Target = net.JoinHostPort(b.RemoteIP, portOf(f.Listen))
+		}
+		out = append(out, f)
+	}
+	return out, nil
+}
+
+func portOf(hostport string) string {
+	_, p, err := net.SplitHostPort(hostport)
+	if err != nil {
+		return ""
+	}
+	return p
 }
 
 // Forward is a parsed [ServerConfig.Forwards] entry.
@@ -401,9 +611,13 @@ func Save(path string, c *Config) error {
 }
 
 func (c *Config) applyDefaults() {
+	if c.Family == "" {
+		c.Family = FamilyBackpack
+	}
 	if c.Log.Level == "" {
 		c.Log.Level = "info"
 	}
+	c.Backhaul = c.Backhaul.withDefaults()
 	c.Server.Mux = c.Server.Mux.withDefaults()
 	c.Client.Mux = c.Client.Mux.withDefaults()
 	c.Server.KCP = c.Server.KCP.withDefaults()
@@ -419,8 +633,11 @@ func (c *Config) applyDefaults() {
 	}
 }
 
-// Validate checks that the active role is internally consistent.
+// Validate checks that the active family and role are internally consistent.
 func (c *Config) Validate() error {
+	if c.Family == FamilyBackhaul {
+		return c.Backhaul.validate()
+	}
 	switch c.Role {
 	case RoleServer:
 		return c.Server.validate()

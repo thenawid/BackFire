@@ -1,0 +1,51 @@
+# backfire backhaul tunnel — a layer-3 (TUN) tunnel carried inside another IP
+# protocol, with optional source-address spoofing. For paths where even the
+# BackPack transports are filtered.
+#
+# Run with:  backfire -c backhaul.toml   (needs root: it creates a TUN device
+# and, for the raw carriers, a raw socket).
+#
+# Set up the peer with the same carrier and token, the tunnel IPs swapped, and
+# role = "client".
+
+family = "backhaul"
+role   = "server"   # the Iran side binds; the client side (abroad) dials
+
+[backhaul]
+  # Carrier — the protocol the encrypted frames hide inside. One of:
+  #   udp   — UDP datagrams (needs a port)
+  #   tcp   — a single framed TCP stream (needs a port)
+  #   icmp  — raw ICMP echo, looks like ping
+  #   ipip  — raw IP proto 4, looks like IP-in-IP
+  #   gre   — raw IP proto 47, looks like a GRE tunnel
+  #   vrrp  — raw IP proto 112, looks like VRRP
+  #   bip   — raw IP proto 253, experimental camouflage
+  carrier = "icmp"
+
+  # Peer's public IP. The client must set this to the server's address; the
+  # server may leave it blank to learn the client from the first packet.
+  peer = ""
+
+  # Only used by the udp/tcp carriers.
+  port = 2000
+
+  # Shared key. Both ends must match. The AES-256 frame key is derived from it.
+  token = "replace-with-a-long-random-key"
+
+  # Point-to-point tunnel addresses. Swap them on the peer.
+  local_ip  = "10.200.0.1"
+  remote_ip = "10.200.0.2"
+  mtu = 1400
+
+  # Spoofing forges the source address of carrier packets to hide the real
+  # origin. Only valid with a raw carrier (icmp/ipip/gre/vrrp/bip). Leave
+  # spoof_source blank for a random source that changes each restart.
+  spoof = false
+  # spoof_source = "203.0.113.50"
+
+  # Optionally publish ports over the established tunnel. A bare port targets the
+  # same port on the peer's tunnel IP.
+  forwards = ["8080"]
+
+[log]
+  level = "info"
