@@ -30,6 +30,22 @@ type WebUISettings struct {
 	// ReadOnly hides every control that would change a tunnel, leaving the panel
 	// purely a monitor.
 	ReadOnly bool `json:"read_only"`
+	// TLS serves the panel over HTTPS. With no cert/key a self-signed
+	// certificate is generated, so encryption can be turned on without obtaining
+	// a CA-signed certificate first.
+	TLS bool `json:"tls"`
+	// TLSCert / TLSKey are an optional certificate pair; when both are set they
+	// are used instead of a self-signed certificate.
+	TLSCert string `json:"tls_cert"`
+	TLSKey  string `json:"tls_key"`
+}
+
+// Scheme returns the URL scheme the panel is reached over.
+func (s WebUISettings) Scheme() string {
+	if s.TLS {
+		return "https"
+	}
+	return "http"
 }
 
 // TelegramSettings configures the bot.

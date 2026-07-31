@@ -245,9 +245,14 @@ It is one embedded HTML file with **no external assets** — no CDN, no fonts, n
 scripts to fetch — so it works on a server with no outbound internet access and
 under a strict content-security policy.
 
-> The login code is the only thing protecting it. Use a long one, and prefer
-> reaching the panel over an SSH tunnel or a VPN rather than opening its port to
-> the world.
+**HTTPS.** Answer yes to *Serve over HTTPS* and the panel serves TLS. Leave the
+certificate path blank for a self-signed certificate generated in memory (your
+browser warns once), or point it at a real cert/key pair. Over HTTPS the session
+cookie is marked `Secure` and an HSTS header is sent.
+
+> The login code is the only thing protecting the panel. Use a long one, turn on
+> HTTPS, and prefer reaching it over an SSH tunnel or a VPN rather than opening
+> its port to the world.
 
 ## Telegram bot
 
@@ -297,7 +302,8 @@ internal/
   menu/                 interactive CLI
   metrics/              per-tunnel counters, history, cross-process state files
   sysstat/              host CPU / memory / disk / network from /proc
-  webui/                web panel (embedded, self-contained)
+  tlsutil/              shared self-signed / supplied TLS material
+  webui/                web panel (embedded, self-contained, HTTP or HTTPS)
   telegram/             bot: commands, keyboards, alerts
   utils/                logger, token, metered pipe helpers
   e2e/                  end-to-end tunnel test across all transports
@@ -318,7 +324,7 @@ nothing behind to misreport.
 
 - Forwarding UDP *services* (the udp/kcp transports carry TCP services today)
 - A QUIC transport
-- HTTPS for the panel, and restore-from-backup in the bot
+- Restore-from-backup in the bot
 - Prebuilt release binaries + checksum-verified installs
 
 ---

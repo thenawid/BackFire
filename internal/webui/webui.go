@@ -21,6 +21,7 @@ import (
 	"github.com/thenawid/backfire/internal/manage"
 	"github.com/thenawid/backfire/internal/metrics"
 	"github.com/thenawid/backfire/internal/sysstat"
+	"github.com/thenawid/backfire/internal/tlsutil"
 	"github.com/thenawid/backfire/internal/utils"
 )
 
@@ -70,7 +71,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", s.settings.Port),
-		Handler:           securityHeaders(mux),
+		Handler:           s.securityHeaders(mux),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {
@@ -80,22 +81,43 @@ func (s *Server) Run(ctx context.Context) error {
 		_ = srv.Shutdown(shutCtx)
 	}()
 
-	s.log.Infof("panel listening on :%d (read-only: %v)", s.settings.Port, s.settings.ReadOnly)
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	s.log.Infof("panel listening on :%d (%s, read-only: %v)",
+		s.settings.Port, s.settings.Scheme(), s.settings.ReadOnly)
+
+	var err error
+	if s.settings.TLS {
+		// A self-signed certificate names the server's own address so a client
+		// that verifies can at least match the IP; blank cert/key falls back to
+		// self-signed inside tlsutil.
+		tlsCfg, cerr := tlsutil.Config(s.settings.TLSCert, s.settings.TLSKey, utils.OutboundIP(), "localhost")
+		if cerr != nil {
+			return cerr
+		}
+		srv.TLSConfig = tlsCfg
+		// The certificates live in TLSConfig, so the file arguments are empty.
+		err = srv.ListenAndServeTLS("", "")
+	} else {
+		err = srv.ListenAndServe()
+	}
+	if err != nil && err != http.ErrServerClosed {
 		return err
 	}
 	return nil
 }
 
 // securityHeaders applies a strict content policy. The panel is entirely
-// self-contained, so it can forbid every external origin outright.
-func securityHeaders(next http.Handler) http.Handler {
+// self-contained, so it can forbid every external origin outright. Over HTTPS it
+// also asks the browser to remember to use TLS.
+func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy",
 			"default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
+		if s.settings.TLS {
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000")
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -143,6 +165,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
+		// Secure only over HTTPS: setting it on a plain-HTTP panel would make the
+		// browser drop the cookie and lock the operator out.
+		Secure:   s.settings.TLS,
 		SameSite: http.SameSiteStrictMode,
 		Expires:  time.Now().Add(sessionTTL),
 	})

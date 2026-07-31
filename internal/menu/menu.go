@@ -350,8 +350,9 @@ func webUIMenu() error {
 			field("login code", cyan+s.Password+reset)
 		}
 		field("mode", modeWord(s.ReadOnly))
+		field("https", onOff(s.TLS))
 		if s.Password != "" {
-			field("url", fmt.Sprintf("http://%s:%d", hostIP(), s.Port))
+			field("url", fmt.Sprintf("%s://%s:%d", s.Scheme(), hostIP(), s.Port))
 		}
 		fmt.Println()
 		fmt.Println("    1) Set up / reconfigure")
@@ -395,7 +396,22 @@ func setupWebUI(cur app.WebUISettings) error {
 	password := ask("Login code", suggested)
 	readOnly := askYesNo("Monitoring only (hide every control that changes a tunnel)", cur.ReadOnly)
 
-	s := app.WebUISettings{Port: port, Password: password, ReadOnly: readOnly}
+	tls := askYesNo("Serve over HTTPS", cur.TLS)
+	certFile, keyFile := cur.TLSCert, cur.TLSKey
+	if tls {
+		note("Leave the certificate path blank to generate a self-signed one.")
+		certFile = ask("TLS certificate file (blank = self-signed)", cur.TLSCert)
+		if certFile != "" {
+			keyFile = ask("TLS private key file", cur.TLSKey)
+		} else {
+			keyFile = ""
+		}
+	}
+
+	s := app.WebUISettings{
+		Port: port, Password: password, ReadOnly: readOnly,
+		TLS: tls, TLSCert: certFile, TLSKey: keyFile,
+	}
 	if err := app.SaveWebUI(s); err != nil {
 		return err
 	}
@@ -404,10 +420,14 @@ func setupWebUI(cur app.WebUISettings) error {
 	}
 
 	title("Panel is live")
-	field("url", cyan+fmt.Sprintf("http://%s:%d", hostIP(), port)+reset)
+	field("url", cyan+fmt.Sprintf("%s://%s:%d", s.Scheme(), hostIP(), port)+reset)
 	field("login code", cyan+password+reset)
 	field("mode", modeWord(readOnly))
+	field("https", onOff(tls))
 	fmt.Println()
+	if tls && certFile == "" {
+		note("Using a self-signed certificate — your browser will warn once; that is expected.")
+	}
 	warn("The port must be open in your firewall for the panel to be reachable.")
 	pause()
 	return nil

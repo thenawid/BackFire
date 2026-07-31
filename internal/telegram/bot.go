@@ -297,8 +297,8 @@ func (b *Bot) webuiText() string {
 	if w.ReadOnly {
 		mode = "monitoring only"
 	}
-	return fmt.Sprintf("<b>🌐 Web panel</b>\n\nURL : http://%s:%d\nLogin code : <code>%s</code>\nMode : %s",
-		host, w.Port, esc(w.Password), mode)
+	return fmt.Sprintf("<b>🌐 Web panel</b>\n\nURL : %s://%s:%d\nLogin code : <code>%s</code>\nMode : %s",
+		w.Scheme(), host, w.Port, esc(w.Password), mode)
 }
 
 func supportText() string {
