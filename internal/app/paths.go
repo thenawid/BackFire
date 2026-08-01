@@ -4,12 +4,12 @@ package app
 
 const (
 	// Version is the backfire engine version.
-	Version = "v0.7.1"
+	Version = "v0.7.2"
 
 	// RepoOwner / RepoName identify the GitHub repository, used by the
 	// installer and any future release-based updater.
 	RepoOwner = "thenawid"
-	RepoName  = "backfire"
+	RepoName  = "BackFire"
 
 	// ServiceDir is the systemd unit directory.
 	ServiceDir = "/etc/systemd/system"

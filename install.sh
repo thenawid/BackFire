@@ -2,7 +2,7 @@
 #
 # backfire installer — run once on the VPS as root:
 #
-#   bash <(curl -fsSL https://raw.githubusercontent.com/thenawid/backfire/main/install.sh)
+#   bash <(curl -fsSL https://raw.githubusercontent.com/thenawid/BackFire/main/install.sh)
 #
 # It downloads the prebuilt binary for this architecture from the latest GitHub
 # release, verifies it against the published SHA-256 checksum, installs it to
@@ -22,7 +22,7 @@ ok()   { echo -e "${GRN}[+]${NC} $*"; }
 warn() { echo -e "${GRY}[!]${NC} $*"; }
 err()  { echo -e "${RED}[x]${NC} $*" >&2; }
 
-REPO="thenawid/backfire"
+REPO="thenawid/BackFire"
 BIN_PATH="/usr/local/bin/backfire"
 CONFIG_DIR="/etc/backfire"
 SRC_DIR="/opt/backfire-src"
