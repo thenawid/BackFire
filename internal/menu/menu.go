@@ -50,9 +50,11 @@ func Run() error {
 		fmt.Printf("\n   %s%s Services%s\n", bold, blue, reset)
 		fmt.Println("    6) Web panel                " + grey + "set up, enable, disable" + reset)
 		fmt.Println("    7) Telegram bot             " + grey + "set up, enable, disable" + reset)
+		fmt.Println("    8) Optimize server          " + grey + "max bandwidth tuning (BBR, buffers)" + reset)
+		fmt.Println("    9) Update backfire          " + grey + "update the binary from GitHub" + reset)
 		fmt.Printf("\n   %s%s Tools%s\n", bold, blue, reset)
-		fmt.Println("    8) Generate a random token")
-		fmt.Println("    9) System information")
+		fmt.Println("   10) Generate a random token")
+		fmt.Println("   11) System information")
 		fmt.Println("    0) Exit")
 		fmt.Println()
 
@@ -72,11 +74,15 @@ func Run() error {
 		case "7":
 			run(botMenu)
 		case "8":
+			run(optimizeServer)
+		case "9":
+			run(updateBackfire)
+		case "10":
 			title("New token")
 			field("token", cyan+utils.GenToken(24)+reset)
 			note("Both ends of a tunnel must use the same token.")
 			pause()
-		case "9":
+		case "11":
 			systemInfo()
 		case "0":
 			fmt.Println()

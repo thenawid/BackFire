@@ -19,6 +19,7 @@ import (
 	"math/rand"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/thenawid/backfire/config"
@@ -36,6 +37,10 @@ type Client struct {
 	log     *utils.Logger
 	allowed map[string]bool // nil means "allow any target"
 	isMux   bool
+	version string
+	// useV1 is set once a server has proven to be a v1-only build, so we stop
+	// attempting the v2 handshake against it on every reconnect.
+	useV1 atomic.Bool
 	// stats is where traffic and connection counts are reported; nil when the
 	// engine runs without a metrics registry.
 	stats *metrics.Tunnel
@@ -48,7 +53,7 @@ func (c *Client) WithMetrics(t *metrics.Tunnel) *Client {
 }
 
 // New builds a Client from its config.
-func New(cfg config.ClientConfig, log *utils.Logger) *Client {
+func New(cfg config.ClientConfig, version string, log *utils.Logger) *Client {
 	var allowed map[string]bool
 	if len(cfg.AllowedTargets) > 0 {
 		allowed = make(map[string]bool, len(cfg.AllowedTargets))
@@ -61,6 +66,7 @@ func New(cfg config.ClientConfig, log *utils.Logger) *Client {
 		log:     log.With("client"),
 		allowed: allowed,
 		isMux:   cfg.Transport.IsMux(),
+		version: version,
 	}
 }
 
@@ -231,13 +237,28 @@ func (c *Client) dialAuthenticated(ctx context.Context) (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := protocol.ClientHandshake(conn, c.cfg.Token); err != nil {
+
+	v2 := !c.useV1.Load()
+	peer, err := protocol.ClientHandshake(conn, c.cfg.Token, c.version, v2)
+	if err == protocol.ErrTryV1 {
+		// The server is a v1-only build. Remember that, redial, and use v1 — the
+		// tunnel keeps working across the version gap.
+		conn.Close()
+		c.useV1.Store(true)
+		conn, err = tr.Dial(dialCtx, c.cfg)
+		if err != nil {
+			return nil, err
+		}
+		peer, err = protocol.ClientHandshake(conn, c.cfg.Token, c.version, false)
+	}
+	if err != nil {
 		conn.Close()
 		return nil, err
 	}
 	if c.stats != nil {
 		c.stats.SetPing(time.Since(start))
 		c.stats.SetLinked(true)
+		c.stats.SetPeerVersion(peer)
 	}
 	return conn, nil
 }

@@ -39,6 +39,7 @@ type Server struct {
 	log      *utils.Logger
 	forwards []config.Forward
 	isMux    bool
+	version  string
 	// stats is where traffic and connection counts are reported; nil when the
 	// engine runs without a metrics registry.
 	stats *metrics.Tunnel
@@ -56,7 +57,7 @@ func (s *Server) WithMetrics(t *metrics.Tunnel) *Server {
 
 // New builds a Server from its config, resolving the forward table up front so
 // a bad entry fails fast instead of at first connection.
-func New(cfg config.ServerConfig, log *utils.Logger) (*Server, error) {
+func New(cfg config.ServerConfig, version string, log *utils.Logger) (*Server, error) {
 	forwards, err := cfg.ParsedForwards()
 	if err != nil {
 		return nil, err
@@ -66,6 +67,7 @@ func New(cfg config.ServerConfig, log *utils.Logger) (*Server, error) {
 		log:      log.With("server"),
 		forwards: forwards,
 		isMux:    cfg.Transport.IsMux(),
+		version:  version,
 	}
 	if !s.isMux {
 		s.ready = pool.NewReady(utils.Seconds(cfg.Pool.IdleTimeout))
@@ -146,10 +148,14 @@ func (s *Server) reapLoop(ctx context.Context) {
 // onLink authenticates an inbound link and installs it according to the mode.
 func (s *Server) onLink(conn net.Conn) {
 	utils.SetKeepAlive(conn, s.cfg.KeepAlive)
-	if err := protocol.ServerHandshake(conn, s.cfg.Token); err != nil {
+	peerVersion, err := protocol.ServerHandshake(conn, s.cfg.Token, s.version)
+	if err != nil {
 		s.log.Warnf("reject %s: %v", conn.RemoteAddr(), err)
 		conn.Close()
 		return
+	}
+	if s.stats != nil {
+		s.stats.SetPeerVersion(peerVersion)
 	}
 	if s.isMux {
 		s.onMuxLink(conn)

@@ -91,12 +91,12 @@ func runTunnel(t *testing.T, transport config.Transport) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	srv, err := server.New(srvCfg, log)
+	srv, err := server.New(srvCfg, "v0.0.0-test", log)
 	if err != nil {
 		t.Fatalf("server.New: %v", err)
 	}
 	go srv.Run(ctx)
-	go client.New(cliCfg, log).Run(ctx)
+	go client.New(cliCfg, "v0.0.0-test", log).Run(ctx)
 
 	// Give the client a moment to dial in and link.
 	deadline := time.Now().Add(5 * time.Second)

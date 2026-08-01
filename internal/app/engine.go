@@ -42,7 +42,7 @@ func Run(ctx context.Context, name string, cfg *config.Config) error {
 			string(cfg.Server.Transport), portOf(cfg.Server.Bind), forwardPorts(cfg.Server))
 		go stats.PublishLoop(done)
 
-		srv, err := server.New(cfg.Server, log)
+		srv, err := server.New(cfg.Server, Version, log)
 		if err != nil {
 			return err
 		}
@@ -53,7 +53,7 @@ func Run(ctx context.Context, name string, cfg *config.Config) error {
 			string(cfg.Client.Transport), portOf(cfg.Client.Server), nil)
 		go stats.PublishLoop(done)
 
-		return client.New(cfg.Client, log).WithMetrics(stats).Run(ctx)
+		return client.New(cfg.Client, Version, log).WithMetrics(stats).Run(ctx)
 
 	default:
 		return fmt.Errorf("unknown role %q", cfg.Role)

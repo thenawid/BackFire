@@ -24,6 +24,7 @@ import (
 	"github.com/thenawid/backfire/internal/metrics"
 	"github.com/thenawid/backfire/internal/sysstat"
 	"github.com/thenawid/backfire/internal/tlsutil"
+	"github.com/thenawid/backfire/internal/updater"
 	"github.com/thenawid/backfire/internal/utils"
 )
 
@@ -72,6 +73,8 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/control", s.guard(s.handleControl))
 	mux.HandleFunc("/api/backup", s.guard(s.handleBackup))
 	mux.HandleFunc("/api/restore", s.guard(s.handleRestore))
+	mux.HandleFunc("/api/update/check", s.guard(s.handleUpdateCheck))
+	mux.HandleFunc("/api/update/apply", s.guard(s.handleUpdateApply))
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", s.settings.Port),
@@ -428,6 +431,89 @@ func (s *Server) handleRestore(w http.ResponseWriter, r *http.Request) {
 		"summary":  report.Summary(),
 		"restored": report.Restored,
 		"failed":   report.Failed,
+	})
+}
+
+// --- self-update ------------------------------------------------------------
+
+// stalePeer describes a linked peer that is far behind the latest release, so
+// the operator knows to update the OTHER server too.
+type stalePeer struct {
+	Tunnel  string `json:"tunnel"`
+	Version string `json:"version"`
+}
+
+// updateStatus is what both update endpoints return: where we are, where the
+// latest is, and any peers that would be left behind.
+type updateStatus struct {
+	Current    string      `json:"current"`
+	Latest     string      `json:"latest"`
+	Available  bool        `json:"available"`
+	Updated    bool        `json:"updated"`
+	StalePeers []stalePeer `json:"stale_peers"`
+}
+
+// stalePeers returns any linked tunnel whose peer is far behind latest.
+func stalePeers(latest updater.Version) []stalePeer {
+	var out []stalePeer
+	for _, st := range metrics.ReadAll() {
+		if !st.Linked || st.PeerVersion == "" {
+			continue
+		}
+		if updater.MuchOlder(updater.Parse(st.PeerVersion), latest) {
+			out = append(out, stalePeer{Tunnel: st.Name, Version: st.PeerVersion})
+		}
+	}
+	return out
+}
+
+// handleUpdateCheck reports the installed and latest versions without changing
+// anything. It is a read-only query, so monitoring-only mode still allows it.
+func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	chk, err := updater.Check(ctx)
+	if err != nil {
+		http.Error(w, "update check failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, updateStatus{
+		Current:    chk.Current.Raw,
+		Latest:     chk.Latest.Raw,
+		Available:  chk.Available,
+		StalePeers: stalePeers(chk.Latest),
+	})
+}
+
+// handleUpdateApply downloads and installs the latest release in place. Running
+// tunnels keep their open copy of the binary and are NOT interrupted; they pick
+// up the new version only when restarted. It changes what runs on the host, so
+// it is refused in monitoring-only mode.
+func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
+	if s.settings.ReadOnly {
+		http.Error(w, "panel is in monitoring-only mode", http.StatusForbidden)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	defer cancel()
+	res, err := updater.Update(ctx)
+	if err != nil {
+		http.Error(w, "update failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	if res.Updated {
+		s.log.Infof("updated %s -> %s via panel (tunnels not interrupted)", res.Current.Raw, res.Latest.Raw)
+	}
+	writeJSON(w, updateStatus{
+		Current:    res.Current.Raw,
+		Latest:     res.Latest.Raw,
+		Available:  !res.UpToDate,
+		Updated:    res.Updated,
+		StalePeers: stalePeers(res.Latest),
 	})
 }
 

@@ -11,6 +11,7 @@ import (
 	"github.com/thenawid/backfire/internal/manage"
 	"github.com/thenawid/backfire/internal/metrics"
 	"github.com/thenawid/backfire/internal/sysstat"
+	"github.com/thenawid/backfire/internal/updater"
 	"github.com/thenawid/backfire/internal/utils"
 )
 
@@ -45,6 +46,7 @@ var commands = []botCommand{
 	{"status", "every tunnel: state, ports, traffic"},
 	{"system", "processor, memory and disk"},
 	{"backup", "send a full backup here as a file"},
+	{"update", "check for and install a new version"},
 	{"alerts", "current alert thresholds"},
 	{"webui", "panel link and login code"},
 	{"support", "project links"},
@@ -147,9 +149,21 @@ func (b *Bot) handle(ctx context.Context, u Update) {
 func mainKeyboard() *InlineKeyboard {
 	return &InlineKeyboard{InlineKeyboard: [][]InlineButton{
 		{{Text: "📊 Status", Data: "status"}, {Text: "🖥 System", Data: "system"}},
-		{{Text: "🔐 Backup", Data: "backup"}, {Text: "🔔 Alerts", Data: "alerts"}},
-		{{Text: "🌐 Panel", Data: "webui"}, {Text: "💙 Support", Data: "support"}},
+		{{Text: "🔐 Backup", Data: "backup"}, {Text: "⟳ Update", Data: "update"}},
+		{{Text: "🔔 Alerts", Data: "alerts"}, {Text: "🌐 Panel", Data: "webui"}},
+		{{Text: "💙 Support", Data: "support"}},
 	}}
+}
+
+// updateKeyboard offers to install when a newer version is available, plus a way
+// back to the main panel.
+func updateKeyboard(canInstall bool) *InlineKeyboard {
+	rows := [][]InlineButton{}
+	if canInstall {
+		rows = append(rows, []InlineButton{{Text: "⬇ Install now", Data: "update_apply"}})
+	}
+	rows = append(rows, []InlineButton{{Text: "⟳ Re-check", Data: "update"}, {Text: "« Back", Data: "menu"}})
+	return &InlineKeyboard{InlineKeyboard: rows}
 }
 
 // render turns a command into the message body and keyboard to show.
@@ -167,9 +181,77 @@ func (b *Bot) render(ctx context.Context, cmd string) (string, *InlineKeyboard) 
 		return supportText(), mainKeyboard()
 	case "backup":
 		return "Preparing a backup…", mainKeyboard()
+	case "update":
+		return b.updateText(ctx)
+	case "update_apply":
+		return b.updateApplyText(ctx)
 	default:
 		return b.welcomeText(), mainKeyboard()
 	}
+}
+
+// updateText checks GitHub for a newer release and reports what it finds,
+// offering an install button when an update is available. It changes nothing.
+func (b *Bot) updateText(ctx context.Context) (string, *InlineKeyboard) {
+	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	chk, err := updater.Check(cctx)
+	if err != nil {
+		return "<b>⟳ Update</b>\n\nCould not check for updates:\n<code>" + esc(err.Error()) + "</code>", updateKeyboard(false)
+	}
+	var s strings.Builder
+	s.WriteString("<b>⟳ Update</b>\n\n")
+	s.WriteString("Installed : <code>" + esc(chk.Current.Raw) + "</code>\n")
+	s.WriteString("Latest : <code>" + esc(chk.Latest.Raw) + "</code>\n")
+	s.WriteString(b.stalePeerText(chk.Latest))
+	if !chk.Available {
+		s.WriteString("\n✅ Already on the latest version.")
+		return s.String(), updateKeyboard(false)
+	}
+	s.WriteString("\nA new version is available. Installing replaces the binary in " +
+		"place — running tunnels are <b>not</b> interrupted and keep the old version " +
+		"until you restart them.")
+	return s.String(), updateKeyboard(true)
+}
+
+// updateApplyText installs the latest release. Running tunnels are not dropped.
+func (b *Bot) updateApplyText(ctx context.Context) (string, *InlineKeyboard) {
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	res, err := updater.Update(cctx)
+	if err != nil {
+		return "<b>⟳ Update</b>\n\nUpdate failed:\n<code>" + esc(err.Error()) + "</code>", updateKeyboard(false)
+	}
+	if res.UpToDate {
+		return "<b>⟳ Update</b>\n\n✅ Already up to date (<code>" + esc(res.Current.Raw) + "</code>).", updateKeyboard(false)
+	}
+	b.log.Infof("updated %s -> %s via telegram (tunnels not interrupted)", res.Current.Raw, res.Latest.Raw)
+	var s strings.Builder
+	s.WriteString("<b>✅ Updated</b>\n\n")
+	s.WriteString("Installed <code>" + esc(res.Latest.Raw) + "</code> (was <code>" + esc(res.Current.Raw) + "</code>).\n\n")
+	s.WriteString("Running tunnels were not interrupted. Restart the panel/bot services " +
+		"and the tunnels when convenient to run the new version.")
+	return s.String(), updateKeyboard(false)
+}
+
+// stalePeerText warns about linked peers far behind the given version, so both
+// ends of a tunnel get updated together.
+func (b *Bot) stalePeerText(latest updater.Version) string {
+	var s strings.Builder
+	for _, st := range metrics.ReadAll() {
+		if !st.Linked || st.PeerVersion == "" {
+			continue
+		}
+		if updater.MuchOlder(updater.Parse(st.PeerVersion), latest) {
+			v := st.PeerVersion
+			if v == "" || v == "unknown" {
+				v = "an older build"
+			}
+			s.WriteString(fmt.Sprintf("\n⚠️ Peer of <b>%s</b> is on <code>%s</code> — update the OTHER server too.\n",
+				esc(st.Name), esc(v)))
+		}
+	}
+	return s.String()
 }
 
 func (b *Bot) welcomeText() string {

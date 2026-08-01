@@ -271,6 +271,7 @@
       <div class="chip">uptime <b id="uptime">—</b></div>
       <div class="chip">version <b id="ver">—</b></div>
       <div class="chip ro" id="rochip" style="display:none">monitoring only</div>
+      <button class="hbtn" id="updateBtn" onclick="checkUpdate()">⟳ Update</button>
       <button class="hbtn" onclick="downloadBackup()">⬇ Backup</button>
       <button class="hbtn" id="restoreBtn" style="display:none" onclick="pickRestore()">⬆ Restore</button>
       <input type="file" id="restoreFile" accept=".gz,.tgz,application/gzip" style="display:none" onchange="doRestore(this)">
@@ -446,8 +447,10 @@ async function tick(){
   $('uptime').textContent = d.uptime;
   $('ver').textContent = d.version;
   $('rochip').style.display = d.read_only ? '' : 'none';
-  // Restore changes what runs on the host, so it is hidden in monitoring-only mode.
+  // Restore and update change what runs on the host, so they are hidden in
+  // monitoring-only mode.
   $('restoreBtn').style.display = d.read_only ? 'none' : '';
+  $('updateBtn').style.display = d.read_only ? 'none' : '';
 
   $('gauges').innerHTML =
     ring(h.cpu_percent, 'CPU', h.cores + ' cores') +
@@ -538,6 +541,49 @@ async function doRestore(input){
     alert(msg);
     tick();
   }catch(e){ alert('Restore failed: '+e); }
+}
+
+// ---------- self-update ----------
+// The update replaces the binary in place. Running tunnels keep their open copy
+// and are NOT interrupted — they pick up the new version only when restarted.
+function stalePeerLines(peers){
+  if(!peers || !peers.length) return '';
+  const l = peers.map(p => '  • tunnel "'+p.tunnel+'": peer on '+(p.version||'an older build'));
+  return '\n\nHeads up — update the OTHER server too, it is far behind:\n'+l.join('\n');
+}
+async function checkUpdate(){
+  const btn = $('updateBtn'); const old = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Checking…';
+  try{
+    const r = await fetch('/api/update/check');
+    const text = await r.text();
+    if(!r.ok){ alert('Update check failed: '+text); return; }
+    const d = JSON.parse(text);
+    if(!d.available){
+      alert('Already on the latest version ('+d.current+').'+stalePeerLines(d.stale_peers));
+      return;
+    }
+    const warn = stalePeerLines(d.stale_peers);
+    if(!confirm('A new version is available.\n\nInstalled: '+d.current+'\nLatest:    '+d.latest+
+      '\n\nInstall it now? The running tunnels are NOT interrupted — they keep the old '+
+      'version until you restart them.'+warn)) return;
+    await applyUpdate(btn);
+  }catch(e){ alert('Update check failed: '+e); }
+  finally{ btn.disabled = false; btn.textContent = old; }
+}
+async function applyUpdate(btn){
+  btn.textContent = 'Updating…';
+  const r = await fetch('/api/update/apply', { method:'POST' });
+  const text = await r.text();
+  if(!r.ok){ alert('Update failed: '+text); return; }
+  const d = JSON.parse(text);
+  if(d.updated){
+    alert('Updated to '+d.latest+' (was '+d.current+').\n\nRunning tunnels were not interrupted. '+
+      'Restart the panel/bot services and the tunnels when convenient to run the new version.');
+  }else{
+    alert('Already up to date ('+d.current+').');
+  }
+  tick();
 }
 
 // An existing session cookie skips the login form.

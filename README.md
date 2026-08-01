@@ -268,6 +268,7 @@ cookie is marked `Secure` and an HSTS header is sent.
 | `/status` | every tunnel: state, ports, traffic, ping |
 | `/system` | processor, memory, disk, uptime |
 | `/backup` | sends every config and setting here as a `.tar.gz` |
+| `/update` | check for and install a new release without dropping tunnels |
 | `/alerts` | current alert thresholds |
 | `/webui` | panel link and login code |
 | `/support` | project links |
@@ -285,6 +286,42 @@ rather than answering to the world.
 
 > `/backup` sends live tunnel tokens over Telegram. That is the point of the
 > command, but treat the resulting file as a secret.
+
+## Maintenance
+
+### Self-update
+
+backfire can update itself from the latest GitHub release from three places: the
+terminal menu (**Update backfire**), the web panel (the **⟳ Update** button) and
+the Telegram bot (`/update`). Each checks the running version against the latest
+release, and installs it only after you confirm.
+
+The install downloads the prebuilt binary for the host's architecture, verifies
+it against the published SHA-256 checksum, and swaps it into place with an
+**atomic rename**. Because every already-running process keeps its open copy of
+the old binary, **the update never drops a live tunnel** — the panel, the bot and
+every tunnel pick up the new version only when you restart them (or on the next
+reboot). The terminal flow offers to restart the panel/bot for you and, only if
+you agree, the tunnels.
+
+When two servers are linked and one is far behind, the update flow prints a
+**mutual-update warning** naming the tunnel and the peer's version, so you know
+to update the other end too rather than let the two drift apart. This works
+because linked peers exchange their versions during the handshake — an older
+peer that predates version reporting still connects and is simply reported as an
+older build.
+
+### Optimize server
+
+`sudo backfire` → **Optimize server** applies modern network tuning aimed at
+maximum tunnel throughput: BBR congestion control with the `fq` qdisc, large
+socket buffers, TCP Fast Open, no slow-start-after-idle, MTU probing, IP
+forwarding, a raised connection-tracking table, and file-descriptor limits
+lifted to a million. The settings are written as drop-in files
+(`/etc/sysctl.d/99-backfire.conf` and `/etc/security/limits.d/99-backfire.conf`),
+so the change is easy to review and to revert by deleting them. When a reboot is
+needed for everything to take full effect it asks; decline and it reminds you to
+reboot later.
 
 ## Project layout
 

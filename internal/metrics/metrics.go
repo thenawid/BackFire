@@ -49,31 +49,33 @@ type Tunnel struct {
 	// pingMicros is the last measured round trip, in microseconds; 0 = unknown.
 	pingMicros atomic.Int64
 
-	mu       sync.Mutex
-	history  []Point
-	lastRx   uint64
-	lastTx   uint64
-	lastAt   time.Time
-	startedA time.Time
+	mu          sync.Mutex
+	history     []Point
+	lastRx      uint64
+	lastTx      uint64
+	lastAt      time.Time
+	startedA    time.Time
+	peerVersion string
 }
 
 // Snapshot is an immutable view of a tunnel, safe to hand to a JSON encoder or a
 // template.
 type Snapshot struct {
-	Name      string  `json:"name"`
-	Role      string  `json:"role"`
-	Family    string  `json:"family"`
-	Transport string  `json:"transport"`
-	Port      int     `json:"port"`
-	Forwarded []int   `json:"forwarded"`
-	Linked    bool    `json:"linked"`
-	RxBytes   uint64  `json:"rx_bytes"`
-	TxBytes   uint64  `json:"tx_bytes"`
-	Total     uint64  `json:"total_bytes"`
-	RxRate    float64 `json:"rx_rate"`
-	TxRate    float64 `json:"tx_rate"`
-	Conns     int64   `json:"connections"`
-	TotalConn int64   `json:"total_connections"`
+	Name        string  `json:"name"`
+	Role        string  `json:"role"`
+	Family      string  `json:"family"`
+	Transport   string  `json:"transport"`
+	PeerVersion string  `json:"peer_version"`
+	Port        int     `json:"port"`
+	Forwarded   []int   `json:"forwarded"`
+	Linked      bool    `json:"linked"`
+	RxBytes     uint64  `json:"rx_bytes"`
+	TxBytes     uint64  `json:"tx_bytes"`
+	Total       uint64  `json:"total_bytes"`
+	RxRate      float64 `json:"rx_rate"`
+	TxRate      float64 `json:"tx_rate"`
+	Conns       int64   `json:"connections"`
+	TotalConn   int64   `json:"total_connections"`
 	// PingMs is the last measured round trip in milliseconds; -1 = unknown.
 	PingMs  float64 `json:"ping_ms"`
 	Uptime  int64   `json:"uptime_seconds"`
@@ -108,6 +110,13 @@ func (t *Tunnel) SetLinked(v bool) { t.linked.Store(v) }
 
 // SetPing records a measured round trip.
 func (t *Tunnel) SetPing(d time.Duration) { t.pingMicros.Store(d.Microseconds()) }
+
+// SetPeerVersion records the software version reported by the tunnel peer.
+func (t *Tunnel) SetPeerVersion(v string) {
+	t.mu.Lock()
+	t.peerVersion = v
+	t.mu.Unlock()
+}
 
 // sample folds the current counters into the history ring. The registry calls
 // this on a fixed interval.
@@ -144,6 +153,7 @@ func (t *Tunnel) Snapshot() Snapshot {
 	hist := make([]Point, len(t.history))
 	copy(hist, t.history)
 	started := t.startedA
+	peerVersion := t.peerVersion
 	t.mu.Unlock()
 
 	var rxRate, txRate float64
@@ -161,23 +171,24 @@ func (t *Tunnel) Snapshot() Snapshot {
 	}
 
 	return Snapshot{
-		Name:      t.Name,
-		Role:      t.Role,
-		Family:    t.Family,
-		Transport: t.Transport,
-		Port:      t.Port,
-		Forwarded: t.Forwarded,
-		Linked:    t.linked.Load(),
-		RxBytes:   rx,
-		TxBytes:   tx,
-		Total:     rx + tx,
-		RxRate:    rxRate,
-		TxRate:    txRate,
-		Conns:     t.conns.Load(),
-		TotalConn: t.total.Load(),
-		PingMs:    ping,
-		Uptime:    uptime,
-		History:   hist,
+		Name:        t.Name,
+		Role:        t.Role,
+		Family:      t.Family,
+		Transport:   t.Transport,
+		PeerVersion: peerVersion,
+		Port:        t.Port,
+		Forwarded:   t.Forwarded,
+		Linked:      t.linked.Load(),
+		RxBytes:     rx,
+		TxBytes:     tx,
+		Total:       rx + tx,
+		RxRate:      rxRate,
+		TxRate:      txRate,
+		Conns:       t.conns.Load(),
+		TotalConn:   t.total.Load(),
+		PingMs:      ping,
+		Uptime:      uptime,
+		History:     hist,
 	}
 }
 

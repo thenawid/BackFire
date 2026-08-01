@@ -21,9 +21,22 @@ import (
 	"time"
 )
 
-// magic prefixes every handshake so a peer speaking a different protocol (or a
-// stray port scanner) is rejected immediately instead of hanging.
-var magic = [4]byte{'B', 'K', 'F', '1'}
+// The magic prefixes every handshake so a peer speaking a different protocol
+// (or a stray port scanner) is rejected immediately instead of hanging. There
+// are two versions:
+//
+//   - v1 ("BKF1") is the original handshake.
+//   - v2 ("BKF2") is identical up to the status byte, then exchanges each side's
+//     software version so a peer can warn when the other end is far behind.
+//
+// A v2 server accepts a v1 client (older build) and simply skips the version
+// exchange; a v2 client that reaches a v1-only server falls back to v1. So a
+// tunnel keeps working while the two ends are on different versions — updating
+// one side never breaks it.
+var (
+	magicV1 = [4]byte{'B', 'K', 'F', '1'}
+	magicV2 = [4]byte{'B', 'K', 'F', '2'}
+)
 
 const (
 	challengeLen = 32
@@ -34,12 +47,23 @@ const (
 
 	statusOK   byte = 0
 	statusFail byte = 1
+
+	// maxVersionLen caps the version string a peer may send.
+	maxVersionLen = 64
+	// UnknownVersion is reported for a peer that predates the version exchange.
+	UnknownVersion = "unknown"
 )
 
-// proof computes HMAC-SHA256(token, magic||challenge).
+// ErrTryV1 signals that the server rejected the v2 handshake (it is an older,
+// v1-only build); the caller should redial and use v1.
+var ErrTryV1 = fmt.Errorf("peer does not speak handshake v2")
+
+// proof computes HMAC-SHA256(token, magic||challenge). The v1 magic is used in
+// the MAC for both versions so a v1 and a v2 peer compute the same proof for a
+// given challenge.
 func proof(token string, challenge []byte) []byte {
 	mac := hmac.New(sha256.New, []byte(token))
-	mac.Write(magic[:])
+	mac.Write(magicV1[:])
 	mac.Write(challenge)
 	return mac.Sum(nil)
 }
@@ -59,67 +83,138 @@ func proof(token string, challenge []byte) []byte {
 // tunnel lives here.
 //
 // ServerHandshake runs the exposed side of the exchange over an accepted
-// connection: it checks the magic, issues a fresh random challenge, then reads
-// and verifies the client's proof in constant time.
-func ServerHandshake(conn net.Conn, token string) error {
+// connection: it checks the magic, issues a fresh random challenge, verifies the
+// client's proof in constant time, and — for a v2 client — exchanges versions.
+// It returns the peer's version, or UnknownVersion for a v1 client.
+func ServerHandshake(conn net.Conn, token, myVersion string) (string, error) {
 	_ = conn.SetDeadline(time.Now().Add(handshakeTimeout))
 	defer conn.SetDeadline(time.Time{})
 
 	var gotMagic [4]byte
 	if _, err := io.ReadFull(conn, gotMagic[:]); err != nil {
-		return fmt.Errorf("read magic: %w", err)
+		return "", fmt.Errorf("read magic: %w", err)
 	}
-	if gotMagic != magic {
+	v2 := gotMagic == magicV2
+	if gotMagic != magicV1 && !v2 {
 		// Say nothing back — an unrecognised peer gets no signal at all.
-		return fmt.Errorf("bad magic %q — not a backfire client", gotMagic)
+		return "", fmt.Errorf("bad magic %q — not a backfire client", gotMagic)
 	}
 
 	challenge := make([]byte, challengeLen)
 	if _, err := rand.Read(challenge); err != nil {
-		return fmt.Errorf("generate challenge: %w", err)
+		return "", fmt.Errorf("generate challenge: %w", err)
 	}
 	if _, err := conn.Write(challenge); err != nil {
-		return fmt.Errorf("write challenge: %w", err)
+		return "", fmt.Errorf("write challenge: %w", err)
 	}
 
 	got := make([]byte, proofLen)
 	if _, err := io.ReadFull(conn, got); err != nil {
-		return fmt.Errorf("read proof: %w", err)
+		return "", fmt.Errorf("read proof: %w", err)
 	}
 	if subtle.ConstantTimeCompare(got, proof(token, challenge)) != 1 {
 		_, _ = conn.Write([]byte{statusFail})
-		return fmt.Errorf("client failed token authentication")
+		return "", fmt.Errorf("client failed token authentication")
 	}
 	if _, err := conn.Write([]byte{statusOK}); err != nil {
-		return fmt.Errorf("write status: %w", err)
+		return "", fmt.Errorf("write status: %w", err)
 	}
-	return nil
+
+	if !v2 {
+		return UnknownVersion, nil // a v1 client sends no version
+	}
+	// v2: server sends its version, then reads the client's.
+	if err := writeString(conn, myVersion); err != nil {
+		return "", fmt.Errorf("write version: %w", err)
+	}
+	peer, err := readString(conn, maxVersionLen)
+	if err != nil {
+		return "", fmt.Errorf("read peer version: %w", err)
+	}
+	return peer, nil
 }
 
-// ClientHandshake runs the origin side over a freshly dialed connection: it
-// announces the magic, answers the challenge with its proof and reads the result.
-func ClientHandshake(conn net.Conn, token string) error {
+// ClientHandshake runs the origin side over a freshly dialed connection. With
+// v2 true it announces v2 and exchanges versions; if the server turns out to be
+// v1-only it returns ErrTryV1 so the caller can redial with v2 false. It returns
+// the peer's version (UnknownVersion when v2 is false).
+func ClientHandshake(conn net.Conn, token, myVersion string, v2 bool) (string, error) {
 	_ = conn.SetDeadline(time.Now().Add(handshakeTimeout))
 	defer conn.SetDeadline(time.Time{})
 
+	magic := magicV1
+	if v2 {
+		magic = magicV2
+	}
 	if _, err := conn.Write(magic[:]); err != nil {
-		return fmt.Errorf("write magic: %w", err)
+		return "", fmt.Errorf("write magic: %w", err)
 	}
 	challenge := make([]byte, challengeLen)
 	if _, err := io.ReadFull(conn, challenge); err != nil {
-		return fmt.Errorf("read challenge: %w", err)
+		// A v1-only server rejects the v2 magic by closing after reading it, so a
+		// failure to read the challenge on a v2 attempt means "fall back to v1".
+		if v2 {
+			return "", ErrTryV1
+		}
+		return "", fmt.Errorf("read challenge: %w", err)
 	}
 	if _, err := conn.Write(proof(token, challenge)); err != nil {
-		return fmt.Errorf("write proof: %w", err)
+		return "", fmt.Errorf("write proof: %w", err)
 	}
 	status := make([]byte, 1)
 	if _, err := io.ReadFull(conn, status); err != nil {
-		return fmt.Errorf("read status: %w", err)
+		return "", fmt.Errorf("read status: %w", err)
 	}
 	if status[0] != statusOK {
-		return fmt.Errorf("server rejected token")
+		return "", fmt.Errorf("server rejected token")
 	}
-	return nil
+
+	if !v2 {
+		return UnknownVersion, nil
+	}
+	// v2: client reads the server's version, then sends its own.
+	peer, err := readString(conn, maxVersionLen)
+	if err != nil {
+		return "", fmt.Errorf("read peer version: %w", err)
+	}
+	if err := writeString(conn, myVersion); err != nil {
+		return "", fmt.Errorf("write version: %w", err)
+	}
+	return peer, nil
+}
+
+// writeString frames a short length-prefixed string.
+func writeString(w io.Writer, s string) error {
+	if len(s) > maxVersionLen {
+		s = s[:maxVersionLen]
+	}
+	var hdr [1]byte
+	hdr[0] = byte(len(s))
+	if _, err := w.Write(hdr[:]); err != nil {
+		return err
+	}
+	_, err := io.WriteString(w, s)
+	return err
+}
+
+// readString reads a length-prefixed string, bounded by max.
+func readString(r io.Reader, max int) (string, error) {
+	var hdr [1]byte
+	if _, err := io.ReadFull(r, hdr[:]); err != nil {
+		return "", err
+	}
+	n := int(hdr[0])
+	if n > max {
+		return "", fmt.Errorf("string length %d exceeds %d", n, max)
+	}
+	if n == 0 {
+		return UnknownVersion, nil
+	}
+	buf := make([]byte, n)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		return "", err
+	}
+	return string(buf), nil
 }
 
 // maxTargetLen guards ReadTarget against a hostile length prefix.
