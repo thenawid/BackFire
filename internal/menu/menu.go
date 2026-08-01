@@ -50,9 +50,9 @@ func Run() error {
 		fmt.Printf("\n   %s%s Services%s\n", bold, blue, reset)
 		fmt.Println("    6) Web panel                " + grey + "set up, enable, disable" + reset)
 		fmt.Println("    7) Telegram bot             " + grey + "set up, enable, disable" + reset)
-		fmt.Println("    8) Optimize server          " + grey + "max bandwidth tuning (BBR, buffers)" + reset)
-		fmt.Println("    9) Update backfire          " + grey + "update the binary from GitHub" + reset)
+		fmt.Println("    8) Update backfire          " + grey + "update the binary from GitHub" + reset)
 		fmt.Printf("\n   %s%s Tools%s\n", bold, blue, reset)
+		fmt.Println("    9) Optimize server          " + grey + "max bandwidth tuning (BBR, buffers)" + reset)
 		fmt.Println("   10) Generate a random token")
 		fmt.Println("   11) System information")
 		fmt.Println("    0) Exit")
@@ -74,9 +74,9 @@ func Run() error {
 		case "7":
 			run(botMenu)
 		case "8":
-			run(optimizeServer)
-		case "9":
 			run(updateBackfire)
+		case "9":
+			run(optimizeServer)
 		case "10":
 			title("New token")
 			field("token", cyan+utils.GenToken(24)+reset)
@@ -158,7 +158,7 @@ func createServer() error {
 		return createBackhaul(config.RoleServer)
 	}
 
-	name := ask("Tunnel name", "main")
+	name := askValid("Tunnel name", "main", validTunnelName)
 	cfg := cmd.DefaultServerConfig()
 	cfg.Server.Bind = "0.0.0.0:" + fmt.Sprint(askInt("Tunnel listen port", 6060))
 	cfg.Server.Transport = chooseTransport(cfg.Server.Transport)
@@ -210,13 +210,13 @@ func createClient() error {
 		return createBackhaul(config.RoleClient)
 	}
 
-	name := ask("Tunnel name", "main")
+	name := askValid("Tunnel name", "main", validTunnelName)
 	cfg := cmd.DefaultClientConfig()
-	cfg.Client.Server = ask("Server address (host:port)", cfg.Client.Server)
+	cfg.Client.Server = askValid("Server address (host:port)", cfg.Client.Server, validHostPort)
 	cfg.Client.Transport = chooseTransport(cfg.Client.Transport)
 	tuneTransport(cfg.Client.Transport, &cfg.Client.Pool, &cfg.Client.KCP)
 
-	cfg.Client.Token = ask("Token (copied from the server)", "")
+	cfg.Client.Token = askRequired("Token (copied from the server)")
 	if cfg.Client.Token == "" {
 		return fmt.Errorf("token is required — copy it from the server side")
 	}

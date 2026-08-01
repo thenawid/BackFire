@@ -28,20 +28,103 @@ var in = bufio.NewReader(os.Stdin)
 // Enter, in parentheses. Nothing is ever silently assumed: if a question has a
 // sensible default, that default is on screen before it is accepted.
 
-// ask reads a line, returning def when the operator just presses Enter.
-func ask(label, def string) string {
+// promptLabel prints one prompt line, spelling out the default or marking the
+// field required.
+func promptLabel(label, def string) {
 	if def != "" {
 		fmt.Printf("  %s%s%s %s(default:%s %s%s%s)%s: ",
 			bold, label, reset, grey, reset, cyan, def, grey, reset)
 	} else {
 		fmt.Printf("  %s%s%s %s(required)%s: ", bold, label, reset, grey, reset)
 	}
-	line, _ := in.ReadString('\n')
-	line = strings.TrimSpace(line)
+}
+
+// readLine reads one line, reporting whether input ended (EOF / Ctrl-D). The
+// trailing newline and surrounding spaces are stripped.
+func readLine() (string, bool) {
+	line, err := in.ReadString('\n')
+	trimmed := strings.TrimSpace(line)
+	if err != nil && trimmed == "" {
+		return "", true
+	}
+	return trimmed, false
+}
+
+// ask reads a line, returning def when the operator just presses Enter. It is
+// deliberately permissive: some flows use an empty answer as a terminator (the
+// forwarded-port and raw-config loops finish on a blank line). A field that must
+// not be empty is asked through askRequired or askValid instead, so the
+// enforcement lives with the fields that need it rather than trapping the
+// terminator loops.
+func ask(label, def string) string {
+	promptLabel(label, def)
+	line, _ := readLine()
 	if line == "" {
 		return def
 	}
 	return line
+}
+
+// askRequired refuses a blank answer and re-asks, so a required field can never
+// advance the flow empty. Only end-of-input (Ctrl-D / closed pipe) breaks the
+// loop, returning "" for the caller's own guard to handle.
+func askRequired(label string) string {
+	for {
+		promptLabel(label, "")
+		line, eof := readLine()
+		if line != "" {
+			return line
+		}
+		if eof {
+			return ""
+		}
+		warn("This field can't be empty — please enter a value.")
+	}
+}
+
+// askOptionalValid allows a blank answer (returning ""), but validates any
+// non-empty answer and re-asks until it passes — for a field that may be left
+// out yet must be well-formed when given.
+func askOptionalValid(label string, validate func(string) error) string {
+	for {
+		fmt.Printf("  %s%s%s %s(optional)%s: ", bold, label, reset, grey, reset)
+		line, eof := readLine()
+		if line == "" {
+			return ""
+		}
+		if err := validate(line); err != nil {
+			fail("%v", err)
+			if eof {
+				return ""
+			}
+			continue
+		}
+		return line
+	}
+}
+
+// askValid is ask with a content check: the answer (or the default, if taken) is
+// passed to validate, and the question is repeated until validate accepts it.
+// This is how a step refuses to advance on an answer that is the wrong shape —
+// a malformed IP, an unsafe name — rather than only refusing a blank one.
+func askValid(label, def string, validate func(string) error) string {
+	for {
+		var v string
+		if def == "" {
+			// Required: re-ask on blank rather than advancing empty.
+			v = askRequired(label)
+			if v == "" {
+				return "" // end of input — let the caller's guard abort
+			}
+		} else {
+			v = ask(label, def)
+		}
+		if err := validate(v); err != nil {
+			fail("%v", err)
+			continue
+		}
+		return v
+	}
 }
 
 // askInt reads a whole number, keeping def on an empty or unparseable answer.

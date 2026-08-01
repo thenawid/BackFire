@@ -2,11 +2,59 @@ package menu
 
 import (
 	"fmt"
+	"net"
+	"strconv"
+	"strings"
 
 	"github.com/thenawid/backfire/cmd"
 	"github.com/thenawid/backfire/config"
 	"github.com/thenawid/backfire/internal/manage"
 )
+
+// validTunnelName rejects anything that could not be a safe systemd unit name.
+func validTunnelName(s string) error {
+	if len(s) > 64 {
+		return fmt.Errorf("the name is too long (max 64 characters)")
+	}
+	for _, r := range s {
+		if !(r == '-' || r == '_' ||
+			(r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')) {
+			return fmt.Errorf("“%c” is not allowed — use letters, digits, - and _ only", r)
+		}
+	}
+	return nil
+}
+
+// validIPAddr insists on a real IP literal, used for the private tunnel
+// endpoints that are always numeric.
+func validIPAddr(s string) error {
+	if net.ParseIP(s) == nil {
+		return fmt.Errorf("“%s” is not a valid IP address (e.g. 10.200.0.1)", s)
+	}
+	return nil
+}
+
+// validHost accepts an IP or a plausible hostname for the public peer address.
+func validHost(s string) error {
+	if s == "" || strings.ContainsAny(s, " \t/\\") {
+		return fmt.Errorf("“%s” is not a valid host or IP address", s)
+	}
+	return nil
+}
+
+// validHostPort insists on a "host:port" pair with a port in range, so a client
+// cannot be created pointing at an address it can never dial.
+func validHostPort(s string) error {
+	host, port, err := net.SplitHostPort(s)
+	if err != nil || host == "" {
+		return fmt.Errorf("“%s” must be host:port, e.g. 203.0.113.5:6060", s)
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n < 1 || n > 65535 {
+		return fmt.Errorf("“%s” has an invalid port", s)
+	}
+	return nil
+}
 
 // chooseFamily asks whether a new tunnel is a BackPack transport tunnel or a
 // Backhaul layer-3 tunnel. It returns true for Backhaul.
@@ -44,19 +92,24 @@ func createBackhaul(role config.Role) error {
 	note("A TUN device carried inside another IP protocol, with optional spoofing.")
 	warn("Backhaul needs root and CAP_NET_ADMIN/CAP_NET_RAW on both servers.")
 
-	name := ask("Tunnel name", "main")
+	name := askValid("Tunnel name", "main", validTunnelName)
+	if name == "" {
+		return fmt.Errorf("a tunnel name is required")
+	}
 	cfg := cmd.DefaultBackhaulConfig(role)
 	bh := &cfg.Backhaul
 
 	bh.Carrier = chooseCarrier(bh.Carrier)
 
 	if role == config.RoleClient {
-		bh.Peer = ask("Foreign server IP (the peer this side dials)", "")
+		bh.Peer = askValid("Foreign server IP (the peer this side dials)", "", validHost)
 		if bh.Peer == "" {
 			return fmt.Errorf("the client side needs the peer's public IP")
 		}
 	} else {
-		bh.Peer = ask("Peer IP (blank = learn it from the first packet)", "")
+		// The server may learn the peer from the first packet, so a blank answer
+		// is allowed; anything typed must still be a valid address.
+		bh.Peer = askOptionalValid("Peer IP (blank = learn it from the first packet)", validHost)
 	}
 
 	if bh.Carrier.NeedsPort() {
@@ -68,7 +121,7 @@ func createBackhaul(role config.Role) error {
 	if role == config.RoleServer {
 		bh.Token = ask("Shared key / PSK", bh.Token)
 	} else {
-		bh.Token = ask("Shared key / PSK (copied from the server)", "")
+		bh.Token = askRequired("Shared key / PSK (copied from the server)")
 		if bh.Token == "" {
 			return fmt.Errorf("the shared key is required")
 		}
@@ -76,13 +129,21 @@ func createBackhaul(role config.Role) error {
 
 	title("Tunnel addresses")
 	note("Private point-to-point addresses for the two ends of the link.")
-	bh.LocalIP = ask("This end's tunnel IP", bh.LocalIP)
-	bh.RemoteIP = ask("Peer's tunnel IP", bh.RemoteIP)
+	bh.LocalIP = askValid("This end's tunnel IP", bh.LocalIP, validIPAddr)
+	bh.RemoteIP = askValid("Peer's tunnel IP", bh.RemoteIP, func(s string) error {
+		if err := validIPAddr(s); err != nil {
+			return err
+		}
+		if s == bh.LocalIP {
+			return fmt.Errorf("the two ends need different tunnel IPs")
+		}
+		return nil
+	})
 
 	if bh.Carrier.IsRaw() {
 		bh.Spoof = askYesNo("Enable IP spoofing (forged source address)", false)
 		if bh.Spoof {
-			bh.SpoofSource = ask("Spoofed source IP (blank = random each restart)", "")
+			bh.SpoofSource = askOptionalValid("Spoofed source IP (blank = random each restart)", validIPAddr)
 		}
 	}
 
