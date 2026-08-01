@@ -27,8 +27,11 @@ const historyLen = 114
 
 // Tunnel is the live state of one tunnel.
 type Tunnel struct {
-	Name      string
-	Role      string
+	Name string
+	Role string
+	// Family is "backpack" or "backhaul".
+	Family string
+	// Transport is the BackPack transport or the Backhaul carrier.
 	Transport string
 	// Port is the tunnel link's own port.
 	Port int
@@ -59,6 +62,7 @@ type Tunnel struct {
 type Snapshot struct {
 	Name      string  `json:"name"`
 	Role      string  `json:"role"`
+	Family    string  `json:"family"`
 	Transport string  `json:"transport"`
 	Port      int     `json:"port"`
 	Forwarded []int   `json:"forwarded"`
@@ -159,6 +163,7 @@ func (t *Tunnel) Snapshot() Snapshot {
 	return Snapshot{
 		Name:      t.Name,
 		Role:      t.Role,
+		Family:    t.Family,
 		Transport: t.Transport,
 		Port:      t.Port,
 		Forwarded: t.Forwarded,
@@ -189,7 +194,7 @@ func NewRegistry() *Registry {
 }
 
 // Register adds a tunnel, or returns the existing one with that name.
-func (r *Registry) Register(name, role, transport string, port int, forwarded []int) *Tunnel {
+func (r *Registry) Register(name, role, family, transport string, port int, forwarded []int) *Tunnel {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if t, ok := r.tunnels[name]; ok {
@@ -198,6 +203,7 @@ func (r *Registry) Register(name, role, transport string, port int, forwarded []
 	t := &Tunnel{
 		Name:      name,
 		Role:      role,
+		Family:    family,
 		Transport: transport,
 		Port:      port,
 		Forwarded: forwarded,

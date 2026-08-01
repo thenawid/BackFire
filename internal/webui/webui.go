@@ -11,6 +11,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/thenawid/backfire/internal/app"
+	"github.com/thenawid/backfire/internal/backup"
 	"github.com/thenawid/backfire/internal/manage"
 	"github.com/thenawid/backfire/internal/metrics"
 	"github.com/thenawid/backfire/internal/sysstat"
@@ -68,6 +70,8 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/overview", s.guard(s.handleOverview))
 	mux.HandleFunc("/api/logs", s.guard(s.handleLogs))
 	mux.HandleFunc("/api/control", s.guard(s.handleControl))
+	mux.HandleFunc("/api/backup", s.guard(s.handleBackup))
+	mux.HandleFunc("/api/restore", s.guard(s.handleRestore))
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", s.settings.Port),
@@ -372,6 +376,59 @@ func (s *Server) handleControl(w http.ResponseWriter, r *http.Request) {
 	}
 	s.log.Infof("%s %s via panel", req.Action, req.Tunnel)
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+// handleBackup streams a gzipped tar of every config and setting as a download.
+func (s *Server) handleBackup(w http.ResponseWriter, r *http.Request) {
+	data, err := backup.Build()
+	if err != nil {
+		http.Error(w, "backup failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	name := fmt.Sprintf("backfire-backup-%s.tar.gz", time.Now().Format("2006-01-02-1504"))
+	w.Header().Set("Content-Type", "application/gzip")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+name+"\"")
+	_, _ = w.Write(data)
+}
+
+// handleRestore accepts an uploaded backup, restores the config files and
+// re-creates the tunnels' systemd units. It is refused in monitoring-only mode,
+// since it changes what runs on the host.
+func (s *Server) handleRestore(w http.ResponseWriter, r *http.Request) {
+	if s.settings.ReadOnly {
+		http.Error(w, "panel is in monitoring-only mode", http.StatusForbidden)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	// Cap the upload; a backup is a handful of small text files.
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<20)
+	file, _, err := r.FormFile("backup")
+	if err != nil {
+		http.Error(w, "no backup file in the upload", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		http.Error(w, "read upload: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	report, err := manage.Restore(data)
+	if err != nil {
+		http.Error(w, "restore failed: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.log.Infof("restore via panel: %s", report.Summary())
+	writeJSON(w, map[string]any{
+		"ok":       true,
+		"summary":  report.Summary(),
+		"restored": report.Restored,
+		"failed":   report.Failed,
+	})
 }
 
 // validName rejects anything that could escape into a systemd unit name or a

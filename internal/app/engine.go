@@ -38,7 +38,7 @@ func Run(ctx context.Context, name string, cfg *config.Config) error {
 
 	switch cfg.Role {
 	case config.RoleServer:
-		stats := reg.Register(name, string(config.RoleServer),
+		stats := reg.Register(name, string(config.RoleServer), string(config.FamilyBackpack),
 			string(cfg.Server.Transport), portOf(cfg.Server.Bind), forwardPorts(cfg.Server))
 		go stats.PublishLoop(done)
 
@@ -49,7 +49,7 @@ func Run(ctx context.Context, name string, cfg *config.Config) error {
 		return srv.WithMetrics(stats).Run(ctx)
 
 	case config.RoleClient:
-		stats := reg.Register(name, string(config.RoleClient),
+		stats := reg.Register(name, string(config.RoleClient), string(config.FamilyBackpack),
 			string(cfg.Client.Transport), portOf(cfg.Client.Server), nil)
 		go stats.PublishLoop(done)
 
@@ -63,7 +63,7 @@ func Run(ctx context.Context, name string, cfg *config.Config) error {
 // runBackhaul starts the layer-3 tunnel engine with its own metrics tunnel.
 func runBackhaul(ctx context.Context, name string, cfg *config.Config,
 	reg *metrics.Registry, done chan struct{}, log *utils.Logger) error {
-	stats := reg.Register(name, string(cfg.Role),
+	stats := reg.Register(name, string(cfg.Role), string(config.FamilyBackhaul),
 		string(cfg.Backhaul.Carrier), cfg.Backhaul.Port, backhaulPorts(cfg.Backhaul))
 	go stats.PublishLoop(done)
 

@@ -7,11 +7,6 @@ import (
 )
 
 const (
-	// WebUIConfig stores the web panel settings.
-	WebUIConfig = ConfigDir + "/webui.json"
-	// TelegramConfig stores the Telegram bot settings.
-	TelegramConfig = ConfigDir + "/telegram.json"
-
 	// WebUIService is the systemd unit that runs the web panel.
 	WebUIService = "backfire-webui.service"
 	// BotService is the systemd unit that runs the Telegram bot.
@@ -20,6 +15,11 @@ const (
 	// DefaultWebUIPort is where the panel listens unless told otherwise.
 	DefaultWebUIPort = 7777
 )
+
+// webUIConfig / telegramConfig are the settings file paths, resolved at call
+// time from ConfigDir so a test that redirects ConfigDir is honoured.
+func webUIConfig() string    { return ConfigDir + "/webui.json" }
+func telegramConfig() string { return ConfigDir + "/telegram.json" }
 
 // WebUISettings configures the web panel.
 type WebUISettings struct {
@@ -94,7 +94,7 @@ func (t TelegramSettings) IsAdmin(id int64) bool {
 // LoadWebUI reads the panel settings.
 func LoadWebUI() (WebUISettings, error) {
 	var s WebUISettings
-	err := loadJSON(WebUIConfig, &s)
+	err := loadJSON(webUIConfig(), &s)
 	if s.Port == 0 {
 		s.Port = DefaultWebUIPort
 	}
@@ -103,18 +103,18 @@ func LoadWebUI() (WebUISettings, error) {
 
 // SaveWebUI writes the panel settings with owner-only permissions, since they
 // contain the login code.
-func SaveWebUI(s WebUISettings) error { return saveJSON(WebUIConfig, s) }
+func SaveWebUI(s WebUISettings) error { return saveJSON(webUIConfig(), s) }
 
 // LoadTelegram reads the bot settings.
 func LoadTelegram() (TelegramSettings, error) {
 	var s TelegramSettings
-	err := loadJSON(TelegramConfig, &s)
+	err := loadJSON(telegramConfig(), &s)
 	return s.WithDefaults(), err
 }
 
 // SaveTelegram writes the bot settings with owner-only permissions, since they
 // contain the bot token.
-func SaveTelegram(s TelegramSettings) error { return saveJSON(TelegramConfig, s) }
+func SaveTelegram(s TelegramSettings) error { return saveJSON(telegramConfig(), s) }
 
 func loadJSON(path string, v any) error {
 	b, err := os.ReadFile(path)

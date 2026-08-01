@@ -7,7 +7,7 @@ import (
 
 func TestCountersAccumulate(t *testing.T) {
 	r := NewRegistry()
-	tu := r.Register("t1", "server", "tcpmux", 6060, []int{443})
+	tu := r.Register("t1", "server", "backpack", "tcpmux", 6060, []int{443})
 
 	tu.AddRx(1000)
 	tu.AddRx(500)
@@ -27,7 +27,7 @@ func TestCountersAccumulate(t *testing.T) {
 
 func TestConnectionCounts(t *testing.T) {
 	r := NewRegistry()
-	tu := r.Register("t1", "server", "tcp", 6060, nil)
+	tu := r.Register("t1", "server", "backpack", "tcp", 6060, nil)
 
 	tu.OpenConn()
 	tu.OpenConn()
@@ -46,7 +46,7 @@ func TestConnectionCounts(t *testing.T) {
 // the byte delta over the elapsed time between two samples.
 func TestSampleComputesRates(t *testing.T) {
 	r := NewRegistry()
-	tu := r.Register("t1", "server", "tcp", 6060, nil)
+	tu := r.Register("t1", "server", "backpack", "tcp", 6060, nil)
 
 	base := time.Now()
 	tu.sample(base) // first sample establishes the baseline, no rate yet
@@ -70,7 +70,7 @@ func TestSampleComputesRates(t *testing.T) {
 // accumulate samples without limit.
 func TestHistoryIsBounded(t *testing.T) {
 	r := NewRegistry()
-	tu := r.Register("t1", "server", "tcp", 6060, nil)
+	tu := r.Register("t1", "server", "backpack", "tcp", 6060, nil)
 
 	base := time.Now()
 	for i := 0; i < historyLen*2; i++ {
@@ -83,7 +83,7 @@ func TestHistoryIsBounded(t *testing.T) {
 
 func TestPingAndLinked(t *testing.T) {
 	r := NewRegistry()
-	tu := r.Register("t1", "client", "kcp", 6060, nil)
+	tu := r.Register("t1", "client", "backpack", "kcp", 6060, nil)
 
 	if s := tu.Snapshot(); s.PingMs != -1 {
 		t.Errorf("unmeasured ping = %.1f, want -1 to mean unknown", s.PingMs)
@@ -102,8 +102,8 @@ func TestPingAndLinked(t *testing.T) {
 
 func TestRegisterIsIdempotent(t *testing.T) {
 	r := NewRegistry()
-	a := r.Register("t1", "server", "tcp", 6060, nil)
-	b := r.Register("t1", "server", "tcp", 6060, nil)
+	a := r.Register("t1", "server", "backpack", "tcp", 6060, nil)
+	b := r.Register("t1", "server", "backpack", "tcp", 6060, nil)
 	if a != b {
 		t.Error("registering the same name twice created a second tunnel")
 	}

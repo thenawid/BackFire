@@ -1,17 +1,13 @@
 package telegram
 
 import (
-	"archive/tar"
-	"bytes"
-	"compress/gzip"
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/thenawid/backfire/internal/app"
+	"github.com/thenawid/backfire/internal/backup"
 	"github.com/thenawid/backfire/internal/manage"
 	"github.com/thenawid/backfire/internal/metrics"
 	"github.com/thenawid/backfire/internal/sysstat"
@@ -310,7 +306,7 @@ func supportText() string {
 
 // sendBackup tars every config and setting and uploads it.
 func (b *Bot) sendBackup(ctx context.Context, chatID int64) {
-	data, err := buildBackup()
+	data, err := backup.Build()
 	if err != nil {
 		_ = b.api.send(ctx, chatID, "Backup failed: "+esc(err.Error()), mainKeyboard())
 		return
@@ -321,51 +317,6 @@ func (b *Bot) sendBackup(ctx context.Context, chatID int64) {
 	if err := b.api.sendDocument(ctx, chatID, name, data, caption); err != nil {
 		_ = b.api.send(ctx, chatID, "Could not upload the backup: "+esc(err.Error()), mainKeyboard())
 	}
-}
-
-// buildBackup produces a gzipped tar of the config directory.
-func buildBackup() ([]byte, error) {
-	entries, err := os.ReadDir(app.ConfigDir)
-	if err != nil {
-		return nil, err
-	}
-	var buf bytes.Buffer
-	gz := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(gz)
-
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		path := filepath.Join(app.ConfigDir, e.Name())
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		content, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		hdr := &tar.Header{
-			Name:    e.Name(),
-			Mode:    int64(info.Mode().Perm()),
-			Size:    int64(len(content)),
-			ModTime: info.ModTime(),
-		}
-		if err := tw.WriteHeader(hdr); err != nil {
-			return nil, err
-		}
-		if _, err := tw.Write(content); err != nil {
-			return nil, err
-		}
-	}
-	if err := tw.Close(); err != nil {
-		return nil, err
-	}
-	if err := gz.Close(); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
 }
 
 // --- alerts -----------------------------------------------------------------
