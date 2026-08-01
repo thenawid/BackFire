@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>backfire panel</title>
+<title>BackFire panel</title>
 <style>
   :root{
     --bg:#070b14; --bg2:#0a1020; --card:#0d1526; --card2:#111a2e;
@@ -135,7 +135,6 @@
     border:1px solid rgba(59,130,246,.32);color:var(--blue2);
   }
   .tag.role{background:rgba(148,163,184,.1);border-color:rgba(148,163,184,.24);color:var(--dim)}
-  .tag.fam{background:rgba(34,211,238,.12);border-color:rgba(34,211,238,.3);color:var(--cyan)}
   .kv{display:grid;grid-template-columns:1fr 1fr;gap:12px 16px;margin-bottom:14px}
   .k{color:var(--dim);font-size:10.5px;letter-spacing:1.1px;text-transform:uppercase}
   .v{font-size:14.5px;font-weight:600;margin-top:3px}
@@ -198,7 +197,7 @@
 <!-- login -->
 <div id="login">
   <form class="lbox" onsubmit="doLogin(event)">
-    <h1>backfire</h1>
+    <h1>BackFire</h1>
     <p>Enter the panel login code.</p>
     <input id="pw" type="password" placeholder="Login code" autocomplete="current-password" autofocus>
     <button class="btn" type="submit">Sign in</button>
@@ -212,7 +211,7 @@
     <div class="brand">
       <div class="logo">🔥</div>
       <div>
-        <b>backfire</b>
+        <b>BackFire</b>
         <span id="os">—</span>
       </div>
     </div>
@@ -345,13 +344,10 @@ function tunnelCard(t, readOnly){
   const ping  = t.ping_ms >= 0 ? t.ping_ms.toFixed(0)+' ms' : '—';
   const fwd   = (t.forwarded && t.forwarded.length) ? t.forwarded.join(', ') : '—';
   const n     = esc(t.name);
-  // Family badge: Backhaul is the layer-3 family, everything else is BackPack.
-  const fam   = t.family === 'backhaul' ? 'Backhaul' : 'BackPack';
   return `<div class="tcard ${cls}">
     <div class="thead">
       <span class="dot ${dot}"></span>
       <span class="tname">${n}</span>
-      <span class="tag fam">${fam}</span>
       ${t.role ? `<span class="tag role">${esc(t.role)}</span>` : ''}
       <span class="tag">${esc(t.transport||'—')}</span>
     </div>
@@ -438,7 +434,6 @@ function showDetails(name){
   if(!t) return;
   const row = (k,v) => '<dt>'+esc(k)+'</dt><dd>'+esc(v)+'</dd>';
   openModal('Details — '+name, '<dl class="dl">' +
-    row('Family', t.family === 'backhaul' ? 'Backhaul (layer 3)' : 'BackPack') +
     row('Role', t.role||'—') +
     row(t.family === 'backhaul' ? 'Carrier' : 'Transport', t.transport||'—') +
     row('Tunnel port', t.port||'—') +
