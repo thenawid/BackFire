@@ -44,9 +44,9 @@ its own flow-controlled stream over a single physical connection.
   protocol, so a scanner learns nothing.
 - **Self-healing client.** A dropped link is redialed with exponential backoff
   and full jitter, so the tunnel comes back on its own after any outage.
-- **Two tunnel families.** BackPack forwards TCP over nine transports; Backhaul
-  runs a layer-3 TUN tunnel disguised as ICMP/GRE/IPIP/VRRP with optional source
-  spoofing, for the hardest-filtered paths.
+- **Two tunnel modes.** A transport mode that forwards TCP over nine transports,
+  and a layer-3 mode that runs a TUN tunnel disguised as ICMP/GRE/IPIP/VRRP with
+  optional source spoofing, for the hardest-filtered paths.
 - **Web panel and Telegram bot.** A self-contained browser dashboard with live
   gauges and per-tunnel throughput charts, and a bot that reports status, sends
   backups and alerts you when something crosses a threshold.
@@ -165,13 +165,13 @@ self-signed certificate. That's fine, because peers authenticate by the **token*
 not the certificate chain. Point them at a real certificate if you terminate a
 named domain, and set `tls_verify = true` on the client.
 
-## Backhaul — layer-3 tunnels
+## Layer-3 tunnels
 
-Alongside the nine BackPack transports (which forward TCP connections), backfire
-has a second family: **Backhaul**, a layer-3 point-to-point tunnel over a TUN
-device. Where BackPack disguises *how* a connection is carried, Backhaul
-disguises the traffic as *another IP protocol entirely* and can forge its source
-address — for paths where even the BackPack transports are filtered.
+Alongside the nine transports (which forward TCP connections), backfire has a
+second mode: a layer-3 point-to-point tunnel over a TUN device. Where the
+transports disguise *how* a connection is carried, this mode disguises the
+traffic as *another IP protocol entirely* and can forge its source address — for
+paths where even the transports are filtered.
 
 Each end gets a TUN interface and a private point-to-point address; every IP
 packet is encrypted with AES-256-GCM (key derived from the shared token) and
@@ -191,18 +191,18 @@ sent inside the chosen carrier:
 address, so the real origin never appears on the wire. Leave the source blank
 for a random one that changes each restart.
 
-Backhaul needs **root** (CAP_NET_ADMIN for the TUN device, CAP_NET_RAW for the
+This mode needs **root** (CAP_NET_ADMIN for the TUN device, CAP_NET_RAW for the
 raw carriers). The interface is created and addressed through ioctls directly,
 with no dependency on `iproute2`. See
 [`examples/backhaul.toml`](examples/backhaul.toml); create one interactively with
-`sudo backfire` → *Create tunnel* → **Backhaul**.
+`sudo backfire` → *Create tunnel* → **layer-3 tunnel**.
 
 > The raw carriers reuse a protocol's *number* for camouflage; they do not
 > emit that protocol's full header format. A filter classifying by protocol
 > number sees `gre`/`vrrp`/etc.; one parsing the protocol's headers would not.
-> Forwarding a UDP *service* over the tunnel is still on the roadmap — today
-> Backhaul carries whatever the OS routes over the interface, and the optional
-> `forwards` publish TCP ports across it.
+> Forwarding a UDP *service* over the tunnel is still on the roadmap — today the
+> layer-3 tunnel carries whatever the OS routes over the interface, and the
+> optional `forwards` publish TCP ports across it.
 
 ---
 
@@ -298,9 +298,9 @@ internal/
   transport/            stream providers: tcp, stealth, udp/kcp, ws, wss
   mux/                  smux wrapper (mux mode)
   pool/                 warm pre-authenticated link pool (pool mode)
-  server/               backpack exposed side: publish ports, hand off connections
-  client/               backpack origin side: link, reconnect, serve targets
-  backhaul/             layer-3 family: TUN device, carriers, frame crypto, spoof
+  server/               transport-mode exposed side: publish ports, hand off connections
+  client/               transport-mode origin side: link, reconnect, serve targets
+  backhaul/             layer-3 tunnel: TUN device, carriers, frame crypto, spoof
   manage/               systemd units + tunnel lifecycle
   menu/                 interactive CLI
   metrics/              per-tunnel counters, history, cross-process state files
@@ -332,12 +332,6 @@ nothing behind to misreport.
 - Prebuilt release binaries + checksum-verified installs
 
 ---
-
-## Acknowledgements
-
-backfire is an independent, from-scratch implementation. Its overall shape was
-inspired by [BackPack](https://github.com/AminMGMT/BackPack); **no code was
-copied** from it. See [NOTICE](NOTICE).
 
 ## License
 

@@ -25,28 +25,75 @@
   }
   .wrap{max-width:1280px;margin:0 auto}
 
-  /* ---------- login ---------- */
-  #login{display:flex;align-items:center;justify-content:center;min-height:82vh}
+  /* ---------- login (iOS frosted glass) ---------- */
+  #login{
+    position:relative;display:flex;align-items:center;justify-content:center;
+    min-height:88vh;overflow:hidden;
+  }
+  /* Vivid colour blobs behind the glass so the blur has something to pick up. */
+  #login::before,#login::after{
+    content:"";position:absolute;border-radius:50%;filter:blur(80px);opacity:.6;z-index:0;
+    animation:drift 14s ease-in-out infinite alternate;
+  }
+  #login::before{width:360px;height:360px;background:var(--blue);top:14%;left:26%}
+  #login::after{width:320px;height:320px;background:var(--cyan);bottom:12%;right:24%;animation-delay:-7s}
+  @keyframes drift{from{transform:translate(-16px,-10px)}to{transform:translate(20px,14px)}}
+
   .lbox{
-    background:linear-gradient(180deg,var(--card2),var(--card));
-    border:1px solid var(--line);border-radius:18px;padding:34px 30px;width:min(400px,94vw);
-    box-shadow:0 24px 60px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.04);
+    position:relative;z-index:1;width:min(400px,92vw);
+    padding:40px 34px 32px;text-align:center;border-radius:26px;
+    background:rgba(20,32,58,.42);
+    -webkit-backdrop-filter:blur(26px) saturate(170%);
+    backdrop-filter:blur(26px) saturate(170%);
+    border:1px solid rgba(255,255,255,.16);
+    box-shadow:0 30px 80px rgba(0,0,0,.5),
+               inset 0 1px 0 rgba(255,255,255,.22),
+               inset 0 -1px 0 rgba(255,255,255,.05);
   }
-  .lbox h1{font-size:24px;letter-spacing:.4px;margin-bottom:6px}
-  .lbox p{color:var(--dim);font-size:13px;margin-bottom:20px}
-  input,select{
-    width:100%;background:#070d1a;border:1px solid var(--line2);color:var(--txt);
-    padding:12px 14px;border-radius:10px;font-size:15px;outline:none;transition:.15s;
+  .licon{
+    width:64px;height:64px;margin:0 auto 18px;border-radius:18px;
+    display:grid;place-items:center;font-size:28px;
+    background:linear-gradient(150deg,var(--blue2),var(--blue3));
+    box-shadow:0 10px 26px rgba(59,130,246,.5), inset 0 1px 0 rgba(255,255,255,.35);
   }
-  input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(59,130,246,.18)}
+  .lbox h1{font-size:26px;letter-spacing:.3px;margin-bottom:6px}
+  .lbox p{color:var(--dim);font-size:13px;margin-bottom:24px}
+  .pwwrap{position:relative}
+  .lbox input{
+    width:100%;color:var(--txt);font-size:15px;text-align:center;letter-spacing:1px;
+    padding:14px 44px;border-radius:14px;outline:none;transition:.18s;
+    background:rgba(255,255,255,.06);
+    border:1px solid rgba(255,255,255,.14);
+    -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+  }
+  .lbox input::placeholder{color:var(--dim);letter-spacing:2px}
+  .lbox input:focus{
+    border-color:var(--blue2);
+    box-shadow:0 0 0 4px rgba(59,130,246,.22);
+    background:rgba(255,255,255,.09);
+  }
+  .eye{
+    position:absolute;right:8px;top:50%;transform:translateY(-50%);
+    background:none;border:0;color:var(--dim);cursor:pointer;font-size:17px;
+    padding:6px 10px;border-radius:10px;transition:.15s;
+  }
+  .eye:hover{color:var(--blue2)}
   .btn{
-    background:linear-gradient(180deg,var(--blue2),var(--blue));border:0;color:#04101f;
-    font-weight:650;padding:12px 16px;border-radius:10px;cursor:pointer;width:100%;
-    margin-top:14px;font-size:15px;transition:.15s;
+    background:linear-gradient(180deg,var(--blue2),var(--blue));border:0;color:#fff;
+    font-weight:650;padding:14px 16px;border-radius:14px;cursor:pointer;width:100%;
+    margin-top:16px;font-size:15px;transition:.18s;
+    box-shadow:0 10px 26px rgba(59,130,246,.4);
   }
   .btn:hover{filter:brightness(1.08)}
   .btn:active{transform:translateY(1px)}
+  .lfoot{margin-top:18px;color:var(--dim);font-size:11.5px;opacity:.8}
   .err{color:var(--bad);font-size:13px;margin-top:12px;min-height:18px}
+
+  /* generic inputs elsewhere keep the solid style */
+  input,select{
+    width:100%;background:#070d1a;border:1px solid var(--line2);color:var(--txt);
+    padding:12px 14px;border-radius:10px;font-size:15px;outline:none;
+  }
 
   /* ---------- header ---------- */
   header{
@@ -197,11 +244,16 @@
 <!-- login -->
 <div id="login">
   <form class="lbox" onsubmit="doLogin(event)">
+    <div class="licon">🔒</div>
     <h1>BackFire</h1>
-    <p>Enter the panel login code.</p>
-    <input id="pw" type="password" placeholder="Login code" autocomplete="current-password" autofocus>
-    <button class="btn" type="submit">Sign in</button>
+    <p>Enter your access password</p>
+    <div class="pwwrap">
+      <input id="pw" type="password" placeholder="Password" autocomplete="current-password" autofocus>
+      <button type="button" class="eye" onclick="togglePw()" aria-label="Show password">👁</button>
+    </div>
+    <button class="btn" type="submit">Unlock</button>
     <div class="err" id="lerr"></div>
+    <div class="lfoot">BackFire · reverse tunnel</div>
   </form>
 </div>
 
@@ -271,6 +323,11 @@ function dur(s){
 function tone(p){ return p >= 90 ? 'var(--bad)' : p >= 75 ? 'var(--warn)' : 'var(--blue2)'; }
 
 // ---------- login ----------
+function togglePw(){
+  const i = $('pw');
+  i.type = i.type === 'password' ? 'text' : 'password';
+  i.focus();
+}
 async function doLogin(e){
   e.preventDefault();
   $('lerr').textContent = '';
