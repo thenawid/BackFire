@@ -1,0 +1,47 @@
+# Builds prebuilt backfire binaries for linux/amd64 and linux/arm64 whenever a
+# version tag (v*) is pushed, and attaches them — each with a SHA-256 checksum —
+# to a GitHub Release. install.sh downloads these instead of building from
+# source, so a normal install is a few-second download with no Go toolchain.
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # needed to create the release and upload assets
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build binaries
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          version="${GITHUB_REF_NAME}"
+          for arch in amd64 arm64; do
+            out="backfire_linux_${arch}"
+            echo "building ${out}"
+            CGO_ENABLED=0 GOOS=linux GOARCH="${arch}" \
+              go build -trimpath -ldflags "-s -w" -o "dist/${out}" .
+            ( cd dist && sha256sum "${out}" > "${out}.sha256" )
+          done
+          ls -l dist
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/backfire_linux_amd64
+            dist/backfire_linux_amd64.sha256
+            dist/backfire_linux_arm64
+            dist/backfire_linux_arm64.sha256
+          generate_release_notes: true

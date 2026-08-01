@@ -65,8 +65,11 @@ On the VPS, as root:
 bash <(curl -fsSL https://raw.githubusercontent.com/thenawid/backfire/main/install.sh)
 ```
 
-The installer builds the binary, installs it to `/usr/local/bin/backfire`, and
-opens the menu. Reopen it any time with:
+The installer downloads the prebuilt binary for your architecture from the
+latest release, verifies it against the published SHA-256 checksum, installs it
+to `/usr/local/bin/backfire` and opens the menu — no Go toolchain, no compiling.
+(If no prebuilt binary is available it falls back to building from source.)
+Reopen the menu any time with:
 
 ```bash
 sudo backfire
@@ -325,6 +328,7 @@ nothing behind to misreport.
 - Forwarding UDP *services* (the udp/kcp transports carry TCP services today)
 - A QUIC transport
 - Restore-from-backup in the bot
+- Signed releases
 - Prebuilt release binaries + checksum-verified installs
 
 ---
