@@ -53,8 +53,9 @@ func Run() error {
 		fmt.Println("    8) Update backfire          " + grey + "update the binary from GitHub" + reset)
 		fmt.Printf("\n   %s%s Tools%s\n", bold, blue, reset)
 		fmt.Println("    9) Optimize server          " + grey + "max bandwidth tuning (BBR, buffers)" + reset)
-		fmt.Println("   10) Generate a random token")
-		fmt.Println("   11) System information")
+		fmt.Println("   10) Diagnose a tunnel        " + grey + "why is it not connecting?" + reset)
+		fmt.Println("   11) Generate a random token")
+		fmt.Println("   12) System information")
 		fmt.Println("    0) Exit")
 		fmt.Println()
 
@@ -78,11 +79,13 @@ func Run() error {
 		case "9":
 			run(optimizeServer)
 		case "10":
+			run(diagnoseTunnel)
+		case "11":
 			title("New token")
 			field("token", cyan+utils.GenToken(24)+reset)
 			note("Both ends of a tunnel must use the same token.")
 			pause()
-		case "11":
+		case "12":
 			systemInfo()
 		case "0":
 			fmt.Println()
