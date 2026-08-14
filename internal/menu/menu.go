@@ -161,7 +161,7 @@ func createServer() error {
 		return createBackhaul(config.RoleServer)
 	}
 
-	name := askValid("Tunnel name", "main", validTunnelName)
+	name := askValid("Tunnel name", suggestedName(), validTunnelName)
 	cfg := cmd.DefaultServerConfig()
 	cfg.Server.Bind = "0.0.0.0:" + fmt.Sprint(askInt("Tunnel listen port", 6060))
 	cfg.Server.Transport = chooseTransport(cfg.Server.Transport)
@@ -213,9 +213,17 @@ func createClient() error {
 		return createBackhaul(config.RoleClient)
 	}
 
-	name := askValid("Tunnel name", "main", validTunnelName)
+	name := askValid("Tunnel name", suggestedName(), validTunnelName)
 	cfg := cmd.DefaultClientConfig()
-	cfg.Client.Server = askValid("Server address (host:port)", cfg.Client.Server, validHostPort)
+	// Ask the exposed server's IP and its tunnel port separately: there is no
+	// sensible default IP, but the port suggests 6060 (the server default) so
+	// Enter accepts it — matching how the two sides pair up.
+	serverIP := askValid("Iran server IP (the exposed side you dial)", "", validHost)
+	if serverIP == "" {
+		return fmt.Errorf("the client needs the server's public IP")
+	}
+	serverPort := askInt("Tunnel port", 6060)
+	cfg.Client.Server = fmt.Sprintf("%s:%d", serverIP, serverPort)
 	cfg.Client.Transport = chooseTransport(cfg.Client.Transport)
 	tuneTransport(cfg.Client.Transport, &cfg.Client.Pool, &cfg.Client.KCP)
 
@@ -644,6 +652,26 @@ func pickTunnel(label string) (string, error) {
 		notes[i] = manage.Status(n)
 	}
 	return names[askChoice(label, names, notes, 0)], nil
+}
+
+// suggestedName proposes a tunnel name that is not already installed, so
+// pressing Enter always yields a usable name and a second tunnel never silently
+// clobbers the first: "main" when it is free, otherwise "tunnel-2", "tunnel-3"…
+func suggestedName() string {
+	existing, _ := manage.List()
+	taken := make(map[string]bool, len(existing))
+	for _, n := range existing {
+		taken[n] = true
+	}
+	if !taken["main"] {
+		return "main"
+	}
+	for i := 2; ; i++ {
+		cand := fmt.Sprintf("tunnel-%d", i)
+		if !taken[cand] {
+			return cand
+		}
+	}
 }
 
 func findState(name string) (metrics.State, bool) {

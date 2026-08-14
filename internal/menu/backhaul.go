@@ -92,7 +92,7 @@ func createBackhaul(role config.Role) error {
 	note("A TUN device carried inside another IP protocol, with optional spoofing.")
 	warn("Backhaul needs root and CAP_NET_ADMIN/CAP_NET_RAW on both servers.")
 
-	name := askValid("Tunnel name", "main", validTunnelName)
+	name := askValid("Tunnel name", suggestedName(), validTunnelName)
 	if name == "" {
 		return fmt.Errorf("a tunnel name is required")
 	}

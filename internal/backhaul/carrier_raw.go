@@ -3,6 +3,8 @@ package backhaul
 import (
 	"fmt"
 	"net"
+	"os"
+	"strings"
 	"sync"
 
 	"github.com/thenawid/backfire/config"
@@ -21,9 +23,14 @@ type rawCarrier struct {
 	fd       int
 	proto    int
 	icmp     bool
+	isServer bool
 	spoof    bool
 	spoofSrc net.IP
 	dst      net.IP // peer public address; learned on the server
+
+	// restoreEchoIgnore restores net.ipv4.icmp_echo_ignore_all to its previous
+	// value on Close; nil when it was not changed.
+	restoreEchoIgnore func()
 
 	mu   sync.Mutex
 	seq  uint16
@@ -38,12 +45,22 @@ func newRawCarrier(p carrierParams) (carrier, error) {
 	}
 
 	c := &rawCarrier{
-		fd:    fd,
-		proto: proto,
-		icmp:  p.cfg.Carrier == config.CarrierICMP,
-		spoof: p.cfg.Spoof,
-		peer:  p.peer,
-		dst:   p.peer,
+		fd:       fd,
+		proto:    proto,
+		icmp:     p.cfg.Carrier == config.CarrierICMP,
+		isServer: p.isServer,
+		spoof:    p.cfg.Spoof,
+		peer:     p.peer,
+		dst:      p.peer,
+	}
+	// An ICMP tunnel rides real ping traffic: the client sends echo requests and
+	// the server answers with echo replies, which is what lets the frames cross
+	// NAT and stateful firewalls that only pass a reply matching a request. But
+	// the kernel would ALSO auto-reply to each request, echoing the client's own
+	// frame straight back and looping it — so the server suppresses the kernel's
+	// replies. The raw socket still receives every request regardless.
+	if c.icmp && c.isServer {
+		c.restoreEchoIgnore = suppressKernelEchoReplies()
 	}
 	if c.spoof {
 		if err := unix.SetsockoptInt(fd, unix.IPPROTO_IP, unix.IP_HDRINCL, 1); err != nil {
@@ -128,22 +145,43 @@ func (c *rawCarrier) stripHeaders(pkt []byte) ([]byte, bool) {
 	if !c.icmp {
 		return body, true
 	}
-	// ICMP: expect an echo reply (type 0) carrying our frame as its data.
-	if len(body) < icmpHeaderLen || body[0] != icmpEchoReply {
+	// ICMP: the peer's messages are the opposite type of ours — a server reads
+	// the client's echo requests, a client reads the server's echo replies — and
+	// must carry our id, so a stray ping is ignored.
+	wantType := byte(icmpEchoReply)
+	if c.isServer {
+		wantType = icmpEchoRequest
+	}
+	if len(body) < icmpHeaderLen || body[0] != wantType {
+		return nil, false
+	}
+	if body[4] != icmpIDHi || body[5] != icmpIDLo {
 		return nil, false
 	}
 	return body[icmpHeaderLen:], true
 }
 
-func (c *rawCarrier) Close() error { return unix.Close(c.fd) }
+func (c *rawCarrier) Close() error {
+	if c.restoreEchoIgnore != nil {
+		c.restoreEchoIgnore()
+	}
+	return unix.Close(c.fd)
+}
 
 const (
-	icmpHeaderLen = 8
-	icmpEchoReply = 0
+	icmpHeaderLen   = 8
+	icmpEchoReply   = 0
+	icmpEchoRequest = 8
+	// icmpID marks our packets ("backfire"-ish) so a stray ping from elsewhere is
+	// not mistaken for a tunnel frame.
+	icmpIDHi = 0xB1
+	icmpIDLo = 0xF5
 )
 
-// wrapICMP frames a payload as an ICMP echo reply. Reply (type 0), not request,
-// so the kernel does not auto-respond to our own packets.
+// wrapICMP frames a payload as an ICMP echo message. The client sends echo
+// requests (type 8) and the server answers with echo replies (type 0) — the
+// same request→reply shape as a real ping, so the traffic passes NAT and
+// stateful firewalls that a bare unsolicited reply would not.
 func (c *rawCarrier) wrapICMP(frame []byte) []byte {
 	c.mu.Lock()
 	c.seq++
@@ -151,11 +189,14 @@ func (c *rawCarrier) wrapICMP(frame []byte) []byte {
 	c.mu.Unlock()
 
 	msg := make([]byte, icmpHeaderLen+len(frame))
-	msg[0] = icmpEchoReply
+	if c.isServer {
+		msg[0] = icmpEchoReply
+	} else {
+		msg[0] = icmpEchoRequest
+	}
 	msg[1] = 0
-	// id = 0xB1F5 ("backfire"-ish), seq increments.
-	msg[4] = 0xB1
-	msg[5] = 0xF5
+	msg[4] = icmpIDHi
+	msg[5] = icmpIDLo
 	msg[6] = byte(seq >> 8)
 	msg[7] = byte(seq)
 	copy(msg[icmpHeaderLen:], frame)
@@ -164,4 +205,24 @@ func (c *rawCarrier) wrapICMP(frame []byte) []byte {
 	msg[2] = byte(cs >> 8)
 	msg[3] = byte(cs)
 	return msg
+}
+
+// suppressKernelEchoReplies sets net.ipv4.icmp_echo_ignore_all=1 so the kernel
+// stops auto-answering the echo requests the tunnel carries, and returns a
+// function that restores the previous value. On any error it does nothing and
+// returns a no-op, since the tunnel still works (just with a harmless duplicate
+// reply) when the setting cannot be changed.
+func suppressKernelEchoReplies() func() {
+	const path = "/proc/sys/net/ipv4/icmp_echo_ignore_all"
+	prev, err := os.ReadFile(path)
+	if err != nil {
+		return func() {}
+	}
+	if strings.TrimSpace(string(prev)) == "1" {
+		return func() {} // already set; leave it as we found it
+	}
+	if err := os.WriteFile(path, []byte("1\n"), 0o644); err != nil {
+		return func() {}
+	}
+	return func() { _ = os.WriteFile(path, prev, 0o644) }
 }

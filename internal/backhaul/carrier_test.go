@@ -133,6 +133,77 @@ func TestRawGRECarrierRoundTrip(t *testing.T) {
 	carrierRoundTrip(t, config.BackhaulConfig{Carrier: config.CarrierGRE, Token: "t"})
 }
 
+// TestICMPCarrierBidirectional proves both legs of the ICMP tunnel: the client's
+// echo request reaches the server, and the server's echo reply reaches the
+// client. The reply leg is the one that used to be dropped when both ends sent
+// the same ICMP type, so it is asserted explicitly here.
+func TestICMPCarrierBidirectional(t *testing.T) {
+	requireRoot(t)
+	loop := net.ParseIP("127.0.0.1")
+	cfg := config.BackhaulConfig{Carrier: config.CarrierICMP, Token: "t"}
+
+	srv, err := newCarrier(carrierParams{cfg: cfg, isServer: true})
+	if err != nil {
+		t.Fatalf("server carrier: %v", err)
+	}
+	defer srv.Close()
+	cli, err := newCarrier(carrierParams{cfg: cfg, isServer: false, peer: loop})
+	if err != nil {
+		t.Fatalf("client carrier: %v", err)
+	}
+	defer cli.Close()
+
+	// Client → server (echo request). Retry until one lands so the server can
+	// learn the peer, since a connectionless carrier may drop the first packet.
+	up := []byte("client-to-server")
+	srvGot := receiveAsync(srv)
+	if !sendUntil(t, cli, up, srvGot) {
+		t.Fatal("client's request never reached the server")
+	}
+
+	// Server → client (echo reply): the server now knows the peer.
+	down := []byte("server-to-client")
+	cliGot := receiveAsync(cli)
+	if !sendUntil(t, srv, down, cliGot) {
+		t.Fatal("server's reply never reached the client — the return path is broken")
+	}
+}
+
+// receiveAsync starts one Receive in the background and returns a channel that
+// delivers the frame (or nothing, on error).
+func receiveAsync(c carrier) <-chan []byte {
+	got := make(chan []byte, 1)
+	go func() {
+		if b, err := c.Receive(); err == nil {
+			got <- append([]byte(nil), b...)
+		}
+	}()
+	return got
+}
+
+// sendUntil sends frame on a ticker until want arrives on got, or times out.
+func sendUntil(t *testing.T, c carrier, frame []byte, got <-chan []byte) bool {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	tick := time.NewTicker(100 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		if err := c.Send(frame); err != nil {
+			t.Fatalf("send: %v", err)
+		}
+		select {
+		case b := <-got:
+			if !bytes.Equal(b, frame) {
+				t.Fatalf("frame mismatch: got %q want %q", b, frame)
+			}
+			return true
+		case <-deadline:
+			return false
+		case <-tick.C:
+		}
+	}
+}
+
 // TestSpoofedCarrierSends checks the spoof path builds and transmits without
 // error over loopback; the forged source is asserted directly in the header
 // test.

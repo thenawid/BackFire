@@ -187,6 +187,15 @@ sent inside the chosen carrier:
 | `vrrp` | VRRP (proto 112) | no | yes |
 | `bip` | experimental (proto 253) | no | yes |
 
+The **ICMP carrier** rides real ping traffic the way it actually flows: the
+client sends echo *requests* and the server answers with echo *replies*, so the
+frames pass NAT and stateful firewalls that would drop a bare, unsolicited
+reply. While an ICMP tunnel is up the server sets `net.ipv4.icmp_echo_ignore_all`
+so its kernel does not also auto-answer those requests (which would loop the
+client's own frames back); the value is restored when the tunnel stops. If ICMP
+never links, the provider is likely filtering it — switch both ends to the
+`udp` or `tcp` carrier.
+
 **IP spoofing** (the raw carriers) sends carrier packets with a forged source
 address, so the real origin never appears on the wire. Leave the source blank
 for a random one that changes each restart.
