@@ -107,17 +107,46 @@ mkdir -p /run/backfire
 ASSET="backfire_linux_${ARCH}"
 BASE="https://github.com/${REPO}/releases/latest/download"
 
+# ---- downloads (Iran-friendly) ----------------------------------------------
+# From some networks — notably Iran — github.com and its release CDN are
+# filtered, so a plain download connects and then hangs forever. Two defences:
+#   1. every download has a stall detector, so it fails fast instead of hanging;
+#   2. GitHub downloads can be routed through a proxy. Point BACKFIRE_MIRROR at a
+#      GitHub proxy prefix and the github URL is appended to it, e.g.
+#         BACKFIRE_MIRROR="https://ghproxy.net/" sudo -E bash install.sh
+#      When no mirror is set and a direct download stalls, a few public proxies
+#      are tried automatically.
+MIRROR="${BACKFIRE_MIRROR:-}"
+DEFAULT_MIRRORS=( "https://ghfast.top/" "https://ghproxy.net/" "https://mirror.ghproxy.com/" )
+
+# _curl adds a connect timeout and a stall detector: abort if the transfer stays
+# under 2 KB/s for 20s, which is exactly how a filtered link fails (it connects,
+# then goes silent) rather than erroring outright.
+_curl() { curl -fSL --connect-timeout 20 --speed-limit 2048 --speed-time 20 --retry 2 --retry-delay 3 "$@"; }
+
+# fetch <github-url> <out>: try the configured mirror (or a direct download),
+# then fall back to the default proxies. Non-zero only when every route fails.
+fetch() {
+  local url="$1" out="$2" p; local -a routes
+  if [[ -n "$MIRROR" ]]; then routes=( "$MIRROR" "" ); else routes=( "" "${DEFAULT_MIRRORS[@]}" ); fi
+  for p in "${routes[@]}"; do
+    [[ -n "$p" ]] && info "trying GitHub proxy ${p}…"
+    if _curl "${p}${url}" -o "$out"; then return 0; fi
+  done
+  return 1
+}
+
 # ---- try the prebuilt binary first ------------------------------------------
 # Download the binary and its checksum, verify, and install. Any failure here is
 # not fatal — we fall through to the source build.
 install_prebuilt() {
   local tmp; tmp="$(mktemp -d)"
   info "Downloading prebuilt ${ASSET} from the latest release…"
-  if ! curl -fsSL "${BASE}/${ASSET}" -o "${tmp}/${ASSET}"; then
-    warn "no prebuilt binary available for ${ARCH}"
+  if ! fetch "${BASE}/${ASSET}" "${tmp}/${ASSET}"; then
+    warn "could not download the prebuilt binary (blocked, offline, or none for ${ARCH})"
     rm -rf "${tmp}"; return 1
   fi
-  if curl -fsSL "${BASE}/${ASSET}.sha256" -o "${tmp}/${ASSET}.sha256"; then
+  if fetch "${BASE}/${ASSET}.sha256" "${tmp}/${ASSET}.sha256"; then
     info "Verifying checksum…"
     # The checksum file records the bare asset name, so verify from its dir.
     if ! ( cd "${tmp}" && sha256sum -c "${ASSET}.sha256" >/dev/null 2>&1 ); then
@@ -144,7 +173,7 @@ have_go() {
 install_go() {
   info "Installing Go ${GO_VERSION} for ${ARCH}…"
   local tarball="go${GO_VERSION}.linux-${ARCH}.tar.gz"
-  curl -fsSL "https://go.dev/dl/${tarball}" -o "/tmp/${tarball}"
+  _curl "https://go.dev/dl/${tarball}" -o "/tmp/${tarball}"
   rm -rf /usr/local/go
   tar -C /usr/local -xzf "/tmp/${tarball}"
   rm -f "/tmp/${tarball}"
@@ -163,13 +192,17 @@ build_from_source() {
     err "git is required to build from source. Install git and re-run."
     exit 1
   fi
+  # Route the clone through the mirror when one is set, and give git the same
+  # stall detector so a filtered link fails fast instead of hanging.
+  export GIT_HTTP_LOW_SPEED_LIMIT=2048 GIT_HTTP_LOW_SPEED_TIME=20
+  local clone_url="${MIRROR}https://github.com/${REPO}.git"
   if [[ -d "$SRC_DIR/.git" ]]; then
     info "Updating source in ${SRC_DIR}…"
     git -C "$SRC_DIR" pull --ff-only || warn "git pull failed, building existing checkout"
   else
     info "Cloning ${REPO}…"
     rm -rf "$SRC_DIR"
-    git clone --depth 1 "https://github.com/${REPO}.git" "$SRC_DIR"
+    git clone --depth 1 "$clone_url" "$SRC_DIR"
   fi
   info "Building backfire…"
   ( cd "$SRC_DIR" && "$(command -v go)" build -trimpath -o "$BIN_PATH" . )
@@ -178,9 +211,18 @@ build_from_source() {
 
 if install_prebuilt; then
   ok "Installed prebuilt $("$BIN_PATH" -v)"
-else
-  build_from_source
+elif build_from_source && [[ -x "$BIN_PATH" ]]; then
   ok "Installed $("$BIN_PATH" -v)"
+else
+  err "Could not download or build backfire — GitHub is likely filtered on this server."
+  echo
+  warn "From Iran, try one of these:"
+  echo "  • Route through a GitHub proxy, then re-run:"
+  echo "      BACKFIRE_MIRROR=\"https://ghproxy.net/\" sudo -E bash install.sh"
+  echo "    (try another proxy if that one is down, e.g. https://ghfast.top/)"
+  echo "  • Or install on the ABROAD server first (no filter there), then copy"
+  echo "    /usr/local/bin/backfire to this server with scp."
+  exit 1
 fi
 
 echo

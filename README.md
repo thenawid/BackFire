@@ -62,7 +62,7 @@ its own flow-controlled stream over a single physical connection.
 On the VPS, as root:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/thenawid/backfire/main/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/thenawid/BackFire/main/install.sh)
 ```
 
 The installer downloads the prebuilt binary for your architecture from the
@@ -74,6 +74,18 @@ Reopen the menu any time with:
 ```bash
 sudo backfire
 ```
+
+**Behind a filter (e.g. the Iran side).** GitHub's release CDN is often blocked
+or throttled, so a direct download stalls. The installer now fails fast instead
+of hanging and automatically tries a few public GitHub proxies; you can also
+name your own and re-run:
+
+```bash
+BACKFIRE_MIRROR="https://ghproxy.net/" sudo -E bash install.sh
+```
+
+If nothing gets through, install on the **abroad** server first (no filter
+there) and copy `/usr/local/bin/backfire` over with `scp`.
 
 ### 1. On the exposed server (Iran)
 

@@ -63,7 +63,7 @@
 روی VPS، به‌عنوان root:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/thenawid/backfire/main/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/thenawid/BackFire/main/install.sh)
 ```
 
 نصب‌کننده باینریِ **از‌پیش‌ساخته** را برای معماری سرورت از آخرین release دانلود
@@ -74,6 +74,18 @@ bash <(curl -fsSL https://raw.githubusercontent.com/thenawid/backfire/main/insta
 ```bash
 sudo backfire
 ```
+
+**پشتِ فیلتر (مثلاً سمتِ ایران).** CDNِ ریلیزِ گیت‌هاب معمولاً بلاک/کند است و
+دانلودِ مستقیم گیر می‌کند. نصب‌کننده حالا به‌جای هنگ‌کردن **سریع رد می‌شود** و
+خودکار چند پروکسیِ عمومیِ گیت‌هاب را امتحان می‌کند؛ می‌توانی پروکسیِ خودت را هم
+بدهی و دوباره اجرا کنی:
+
+```bash
+BACKFIRE_MIRROR="https://ghproxy.net/" sudo -E bash install.sh
+```
+
+اگر هیچ‌کدام رد نشد، اول روی سرورِ **خارج** نصب کن (آن‌جا فیلتر نیست) و بعد فایلِ
+`/usr/local/bin/backfire` را با `scp` به سرورِ ایران کپی کن.
 
 ### ۱. روی سرور نمایان (ایران)
 
