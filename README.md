@@ -332,6 +332,19 @@ so the change is easy to review and to revert by deleting them. When a reboot is
 needed for everything to take full effect it asks; decline and it reminds you to
 reboot later.
 
+### Uninstall
+
+`sudo backfire` → **Uninstall backfire** removes everything backfire installed:
+every tunnel and its systemd unit, the panel and bot services, the optimization
+drop-ins, all configs and tokens in `/etc/backfire`, the runtime state, and the
+binary itself. It offers to save a backup of the configs first, then asks to
+confirm before anything is deleted. You can also do it without the menu — handy
+if the binary is broken:
+
+```bash
+sudo bash <(curl -fsSL https://raw.githubusercontent.com/thenawid/BackFire/main/install.sh) uninstall
+```
+
 ## Project layout
 
 ```

@@ -56,6 +56,7 @@ func Run() error {
 		fmt.Println("   10) Diagnose a tunnel        " + grey + "why is it not connecting?" + reset)
 		fmt.Println("   11) Generate a random token")
 		fmt.Println("   12) System information")
+		fmt.Println("   13) Uninstall backfire       " + grey + "remove the panel and everything" + reset)
 		fmt.Println("    0) Exit")
 		fmt.Println()
 
@@ -87,6 +88,8 @@ func Run() error {
 			pause()
 		case "12":
 			systemInfo()
+		case "13":
+			run(uninstallAll)
 		case "0":
 			fmt.Println()
 			return nil

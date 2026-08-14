@@ -253,6 +253,18 @@ TCP Fast Open، حذف slow-start-after-idle، MTU probing، فورواردِ IP
 اعمالِ کاملِ همه‌چیز به ریبوت نیاز باشد می‌پرسد؛ رد کنی، یادت می‌اندازد که بعداً
 حتماً ریبوت کنی.
 
+### حذفِ کامل (Uninstall)
+
+`sudo backfire` → **Uninstall backfire** همه‌چیزی را که backfire نصب کرده پاک
+می‌کند: هر تونل و یونیتِ systemdش، سرویسِ پنل و ربات، فایل‌های بهینه‌سازی، همه‌ی
+کانفیگ‌ها و توکن‌ها در `/etc/backfire`، وضعیتِ رانتایم، و خودِ باینری. اول پیشنهاد
+می‌دهد یک بکاپ از کانفیگ‌ها بگیرد، بعد قبل از حذف تأیید می‌گیرد. بدونِ منو هم
+می‌شود — به‌دردبخور وقتی باینری خراب است:
+
+```bash
+sudo bash <(curl -fsSL https://raw.githubusercontent.com/thenawid/BackFire/main/install.sh) uninstall
+```
+
 ## تونل‌های لایه‌۳
 
 کنار نُه ترنسپورت (که TCP را forward می‌کنند)، backfire یک حالتِ دوم دارد: یک

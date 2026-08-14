@@ -14,6 +14,9 @@
 #
 # Reopen the menu any time with:   sudo backfire
 #
+# Uninstall everything backfire installed:
+#   sudo bash <(curl -fsSL https://raw.githubusercontent.com/thenawid/BackFire/main/install.sh) uninstall
+#
 set -euo pipefail
 
 RED='\033[0;31m'; GRN='\033[0;32m'; WHT='\033[1;37m'; GRY='\033[0;90m'; NC='\033[0m'
@@ -25,11 +28,70 @@ err()  { echo -e "${RED}[x]${NC} $*" >&2; }
 REPO="thenawid/BackFire"
 BIN_PATH="/usr/local/bin/backfire"
 CONFIG_DIR="/etc/backfire"
+STATE_DIR="/run/backfire"
 SRC_DIR="/opt/backfire-src"
+SYSCTL_DROPIN="/etc/sysctl.d/99-backfire.conf"
+LIMITS_DROPIN="/etc/security/limits.d/99-backfire.conf"
 GO_VERSION="1.24.5"
 GO_MIN_MINOR=24
 
 if [[ $EUID -ne 0 ]]; then err "Please run as root (sudo)."; exit 1; fi
+
+# ---- uninstall --------------------------------------------------------------
+# Remove backfire and everything it installed. Runs entirely from the shell, so
+# it works even if the binary is broken. Invoke with:
+#   sudo bash install.sh uninstall        (or add -y to skip the prompt)
+uninstall_all() {
+  local assume_yes="${1:-}"
+  info "This will remove backfire and EVERYTHING it installed:"
+  echo "  • every backfire-*.service tunnel/panel/bot unit"
+  echo "  • the optimization drop-ins ($SYSCTL_DROPIN, $LIMITS_DROPIN)"
+  echo "  • all configs and tokens in $CONFIG_DIR"
+  echo "  • the state in $STATE_DIR and any source tree in $SRC_DIR"
+  echo "  • the binary at $BIN_PATH"
+  echo
+
+  if [[ "$assume_yes" != "-y" && "$assume_yes" != "--yes" ]]; then
+    if [[ -t 0 ]]; then
+      read -r -p "Type 'yes' to remove all of it: " reply
+      [[ "$reply" == "yes" ]] || { warn "Cancelled — nothing was removed."; exit 0; }
+    else
+      err "Refusing to uninstall non-interactively without -y. Re-run: install.sh uninstall -y"
+      exit 1
+    fi
+  fi
+
+  # Stop, disable and delete every backfire unit.
+  shopt -s nullglob
+  for unit in /etc/systemd/system/backfire-*.service; do
+    local name; name="$(basename "$unit")"
+    systemctl stop "$name" 2>/dev/null || true
+    systemctl disable "$name" 2>/dev/null || true
+    rm -f "$unit"
+    ok "removed unit $name"
+  done
+  shopt -u nullglob
+  systemctl daemon-reload 2>/dev/null || true
+
+  # Optimization drop-ins, then reload so they stop being applied on boot.
+  rm -f "$SYSCTL_DROPIN" "$LIMITS_DROPIN"
+  sysctl --system >/dev/null 2>&1 || true
+  ok "removed optimization drop-ins"
+
+  # Configs, state, source tree, and finally the binary.
+  rm -rf "$CONFIG_DIR" "$STATE_DIR" "$SRC_DIR"
+  ok "removed $CONFIG_DIR, $STATE_DIR and $SRC_DIR"
+  rm -f "$BIN_PATH"
+  ok "removed $BIN_PATH"
+
+  echo
+  ok "backfire has been completely uninstalled."
+  exit 0
+}
+
+case "${1:-}" in
+  uninstall|--uninstall|remove) uninstall_all "${2:-}" ;;
+esac
 
 case "$(uname -m)" in
   x86_64|amd64)  ARCH="amd64" ;;

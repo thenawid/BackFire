@@ -150,6 +150,21 @@ func Apply() (*Report, error) {
 	return rep, nil
 }
 
+// Revert removes the drop-in files this package writes and reloads sysctl, so a
+// full uninstall leaves no backfire tuning behind. A missing file is not an
+// error — reverting an un-optimized host is a no-op.
+func Revert() error {
+	for _, p := range []string{sysctlPath, limitsPath} {
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove %s: %w", p, err)
+		}
+	}
+	// Reload so the removed sysctl values stop being reapplied on the next boot;
+	// the live values persist until reboot, which is the same as any sysctl edit.
+	_ = exec.Command("sysctl", "--system").Run()
+	return nil
+}
+
 // bbrAvailable reports whether the kernel offers BBR.
 func bbrAvailable() bool {
 	b, err := os.ReadFile("/proc/sys/net/ipv4/tcp_available_congestion_control")
