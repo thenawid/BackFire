@@ -4,7 +4,7 @@ package app
 
 const (
 	// Version is the backfire engine version.
-	Version = "v0.7.6"
+	Version = "v0.7.7"
 
 	// RepoOwner / RepoName identify the GitHub repository, used by the
 	// installer and any future release-based updater.

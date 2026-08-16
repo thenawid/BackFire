@@ -9,6 +9,7 @@ import (
 	"github.com/thenawid/backfire/cmd"
 	"github.com/thenawid/backfire/config"
 	"github.com/thenawid/backfire/internal/manage"
+	"github.com/thenawid/backfire/internal/utils"
 )
 
 // validTunnelName rejects anything that could not be a safe systemd unit name.
@@ -189,11 +190,46 @@ func createBackhaul(role config.Role) error {
 	fmt.Println()
 	field("carrier", string(bh.Carrier)+carrierSpoofNote(*bh))
 	field("tunnel", bh.LocalIP+" ↔ "+bh.RemoteIP)
+	if bh.Carrier.NeedsPort() {
+		field("carrier port", fmt.Sprintf("%d", bh.Port))
+	} else {
+		field("carrier port", grey+"none — "+string(bh.Carrier)+" has no port, like ping"+reset)
+	}
 	if role == config.RoleServer {
 		field("token", cyan+bh.Token+reset)
 	}
+
+	// The single most common confusion is what to do on the other end, so spell
+	// it out explicitly rather than leaving the operator to work it out.
 	fmt.Println()
-	note("Use the same carrier and key on the peer, with the tunnel IPs swapped.")
+	if role == config.RoleServer {
+		title("Now set up the OTHER server (abroad)")
+		note("Create a CLIENT layer-3 tunnel there with exactly these values:")
+		field("  carrier", string(bh.Carrier))
+		field("  token", cyan+bh.Token+reset)
+		peer := "this server's PUBLIC IP"
+		if ip := utils.OutboundIP(); ip != "" {
+			peer = ip + "  (this server's public IP)"
+		}
+		field("  peer / server IP", peer)
+		field("  this end's IP", bh.RemoteIP)
+		field("  peer's IP", bh.LocalIP)
+		if bh.Carrier.NeedsPort() {
+			field("  carrier port", fmt.Sprintf("%d", bh.Port))
+		}
+		fmt.Println()
+		note("Then test from the other server:   ping %s", bh.LocalIP)
+	} else {
+		note("The tunnel is up once the server side is running with the same carrier")
+		note("and token. Test with:   ping %s", bh.RemoteIP)
+	}
+
+	if bh.Carrier == config.CarrierICMP {
+		fmt.Println()
+		warn("Many hosting providers filter ICMP. If it never links, switch BOTH")
+		warn("ends to the 'udp' (or 'tcp') carrier — those use a port and are")
+		warn("rarely filtered. Check with Tools → Diagnose a tunnel.")
+	}
 	pause()
 	return nil
 }
