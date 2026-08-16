@@ -113,9 +113,18 @@ func createBackhaul(role config.Role) error {
 		bh.Peer = askOptionalValid("Peer IP (blank = learn it from the first packet)", validHost)
 	}
 
-	if bh.Carrier.NeedsPort() {
-		bh.Port = askInt("Carrier port", orInt(bh.Port, 2000))
+	// Every carrier gets a port, asked here, and it must match on both ends:
+	// udp/tcp bind it, and icmp uses it as the ICMP echo identifier (its
+	// stand-in for a port). Asking it for all carriers keeps the two sides
+	// configured the same way.
+	portLabel := "Tunnel port"
+	switch {
+	case bh.Carrier == config.CarrierICMP:
+		portLabel = "Tunnel port (ICMP has no real port — this is its id; match on both ends)"
+	case !bh.Carrier.NeedsPort():
+		portLabel = "Tunnel port (channel id; match on both ends)"
 	}
+	bh.Port = askInt(portLabel, orInt(bh.Port, 2000))
 
 	// The token must match on both ends: the server suggests a fresh one and
 	// shows it; the client pastes it.
@@ -190,11 +199,7 @@ func createBackhaul(role config.Role) error {
 	fmt.Println()
 	field("carrier", string(bh.Carrier)+carrierSpoofNote(*bh))
 	field("tunnel", bh.LocalIP+" ↔ "+bh.RemoteIP)
-	if bh.Carrier.NeedsPort() {
-		field("carrier port", fmt.Sprintf("%d", bh.Port))
-	} else {
-		field("carrier port", grey+"none — "+string(bh.Carrier)+" has no port, like ping"+reset)
-	}
+	field("port", portLabelFor(bh.Carrier, bh.Port))
 	if role == config.RoleServer {
 		field("token", cyan+bh.Token+reset)
 	}
@@ -214,9 +219,7 @@ func createBackhaul(role config.Role) error {
 		field("  peer / server IP", peer)
 		field("  this end's IP", bh.RemoteIP)
 		field("  peer's IP", bh.LocalIP)
-		if bh.Carrier.NeedsPort() {
-			field("  carrier port", fmt.Sprintf("%d", bh.Port))
-		}
+		field("  port", fmt.Sprintf("%d", bh.Port))
 		fmt.Println()
 		note("Then test from the other server:   ping %s", bh.LocalIP)
 	} else {
@@ -232,6 +235,19 @@ func createBackhaul(role config.Role) error {
 	}
 	pause()
 	return nil
+}
+
+// portLabelFor describes a backhaul port for the summary, noting when it is an
+// identifier rather than a real transport port.
+func portLabelFor(c config.Carrier, port int) string {
+	switch {
+	case c == config.CarrierICMP:
+		return fmt.Sprintf("%d %s", port, grey+"(ICMP id — match on both ends)"+reset)
+	case !c.NeedsPort():
+		return fmt.Sprintf("%d %s", port, grey+"(channel id — match on both ends)"+reset)
+	default:
+		return fmt.Sprintf("%d", port)
+	}
 }
 
 func carrierSpoofNote(b config.BackhaulConfig) string {

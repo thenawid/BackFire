@@ -169,6 +169,52 @@ func TestICMPCarrierBidirectional(t *testing.T) {
 	}
 }
 
+// TestICMPPortIsIdentifier proves the tunnel port really acts as the ICMP echo
+// id: two ends that share a port pass frames, and a mismatched port does not —
+// so ICMP has a working "port" like the other carriers.
+func TestICMPPortIsIdentifier(t *testing.T) {
+	requireRoot(t)
+	loop := net.ParseIP("127.0.0.1")
+	mk := func(server bool, port int) carrier {
+		c, err := newCarrier(carrierParams{
+			cfg:      config.BackhaulConfig{Carrier: config.CarrierICMP, Token: "t", Port: port},
+			isServer: server,
+			peer:     loop,
+		})
+		if err != nil {
+			t.Fatalf("carrier: %v", err)
+		}
+		return c
+	}
+
+	// Matching ports (7001 both) → the frame crosses.
+	srv, cli := mk(true, 7001), mk(false, 7001)
+	defer srv.Close()
+	defer cli.Close()
+	if !sendUntil(t, cli, []byte("same-id"), receiveAsync(srv)) {
+		t.Fatal("frame did not cross with matching ports")
+	}
+
+	// Mismatched ports (client 7001, server 9999) → nothing should arrive.
+	srv2, cli2 := mk(true, 9999), mk(false, 7001)
+	defer srv2.Close()
+	defer cli2.Close()
+	got := receiveAsync(srv2)
+	deadline := time.After(1500 * time.Millisecond)
+	tick := time.NewTicker(100 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		_ = cli2.Send([]byte("wrong-id"))
+		select {
+		case <-got:
+			t.Fatal("a frame crossed despite mismatched ports (ids)")
+		case <-deadline:
+			return // good: nothing arrived
+		case <-tick.C:
+		}
+	}
+}
+
 // receiveAsync starts one Receive in the background and returns a channel that
 // delivers the frame (or nothing, on error).
 func receiveAsync(c carrier) <-chan []byte {

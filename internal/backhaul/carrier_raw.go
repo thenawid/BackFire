@@ -32,6 +32,11 @@ type rawCarrier struct {
 	// value on Close; nil when it was not changed.
 	restoreEchoIgnore func()
 
+	// icmpID is the ICMP echo identifier that stands in for a port on the ICMP
+	// carrier: both ends must use the same value, and it lets several ICMP
+	// tunnels share the host, each demultiplexed by its id.
+	icmpID uint16
+
 	mu   sync.Mutex
 	seq  uint16
 	peer net.IP
@@ -52,6 +57,7 @@ func newRawCarrier(p carrierParams) (carrier, error) {
 		spoof:    p.cfg.Spoof,
 		peer:     p.peer,
 		dst:      p.peer,
+		icmpID:   icmpIDFromPort(p.cfg.Port),
 	}
 	// An ICMP tunnel rides real ping traffic: the client sends echo requests and
 	// the server answers with echo replies, which is what lets the frames cross
@@ -155,7 +161,7 @@ func (c *rawCarrier) stripHeaders(pkt []byte) ([]byte, bool) {
 	if len(body) < icmpHeaderLen || body[0] != wantType {
 		return nil, false
 	}
-	if body[4] != icmpIDHi || body[5] != icmpIDLo {
+	if uint16(body[4])<<8|uint16(body[5]) != c.icmpID {
 		return nil, false
 	}
 	return body[icmpHeaderLen:], true
@@ -172,11 +178,20 @@ const (
 	icmpHeaderLen   = 8
 	icmpEchoReply   = 0
 	icmpEchoRequest = 8
-	// icmpID marks our packets ("backfire"-ish) so a stray ping from elsewhere is
-	// not mistaken for a tunnel frame.
-	icmpIDHi = 0xB1
-	icmpIDLo = 0xF5
+	// defaultICMPID marks our packets ("backfire"-ish) when no port was set, so a
+	// stray ping from elsewhere is not mistaken for a tunnel frame.
+	defaultICMPID = 0xB1F5
 )
+
+// icmpIDFromPort maps the configured tunnel port onto the ICMP echo identifier,
+// so ICMP has a "port" like the other carriers. Zero falls back to the default
+// marker, keeping tunnels created before the port was asked working unchanged.
+func icmpIDFromPort(port int) uint16 {
+	if port <= 0 || port > 0xFFFF {
+		return defaultICMPID
+	}
+	return uint16(port)
+}
 
 // wrapICMP frames a payload as an ICMP echo message. The client sends echo
 // requests (type 8) and the server answers with echo replies (type 0) — the
@@ -195,8 +210,8 @@ func (c *rawCarrier) wrapICMP(frame []byte) []byte {
 		msg[0] = icmpEchoRequest
 	}
 	msg[1] = 0
-	msg[4] = icmpIDHi
-	msg[5] = icmpIDLo
+	msg[4] = byte(c.icmpID >> 8)
+	msg[5] = byte(c.icmpID)
 	msg[6] = byte(seq >> 8)
 	msg[7] = byte(seq)
 	copy(msg[icmpHeaderLen:], frame)
