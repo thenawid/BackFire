@@ -166,6 +166,7 @@ func createServer() error {
 
 	name := askValid("Tunnel name", suggestedName(), validTunnelName)
 	cfg := cmd.DefaultServerConfig()
+	note("The port this tunnel listens on — the client abroad must dial the same one.")
 	cfg.Server.Bind = "0.0.0.0:" + fmt.Sprint(askInt("Tunnel listen port", 6060))
 	cfg.Server.Transport = chooseTransport(cfg.Server.Transport)
 	tuneTransport(cfg.Server.Transport, &cfg.Server.Pool, &cfg.Server.KCP)
@@ -225,6 +226,7 @@ func createClient() error {
 	if serverIP == "" {
 		return fmt.Errorf("the client needs the server's public IP")
 	}
+	note("Must be the SAME port the server listens on (its 'Tunnel listen port').")
 	serverPort := askInt("Tunnel port", 6060)
 	cfg.Client.Server = fmt.Sprintf("%s:%d", serverIP, serverPort)
 	cfg.Client.Transport = chooseTransport(cfg.Client.Transport)
